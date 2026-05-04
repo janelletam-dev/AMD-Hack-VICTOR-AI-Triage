@@ -62,7 +62,13 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173/patient> or <http://localhost:5173/clinician>.
+Three views are available:
+
+- <http://localhost:5173/patient> — kiosk: 3-phase voice intake (name → DOB → reason for visit) with confirmation cards.
+- <http://localhost:5173/clinician> — V.I.C.T.O.R. dashboard: live transcript, captured intake, biomarkers, SOAP draft, 5-agent swarm panel.
+- <http://localhost:5173/clinician/epic> — Epic-style EMR view: patient banner, ESI acuity, concordance flag, SOAP, and clinician sign-off.
+
+Captured fields propagate from the patient kiosk to the clinician dashboard and EMR view in the same browser tab; a hard refresh clears them.
 
 The frontend expects the backend at `VITE_BACKEND_WS_URL` (defaults to `ws://localhost:8000`).
 

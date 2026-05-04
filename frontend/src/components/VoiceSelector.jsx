@@ -1,3 +1,10 @@
+import { Mars, Venus } from "lucide-react";
+
+const VOICES = [
+  { id: "victor", name: "Victor", desc: "Calm, deliberate, lower register.", Icon: Mars },
+  { id: "jackie", name: "Jackie", desc: "Warm, attentive, higher register.", Icon: Venus },
+];
+
 export default function VoiceSelector({ onSelect }) {
   const labelStyle = {
     fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
@@ -25,13 +32,10 @@ export default function VoiceSelector({ onSelect }) {
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {[
-          { id: "victor", name: "Victor", desc: "Calm, deliberate, lower register." },
-          { id: "jackie", name: "Jackie", desc: "Warm, attentive, higher register." },
-        ].map((v) => (
+        {VOICES.map(({ id, name, desc, Icon }) => (
           <button
-            key={v.id}
-            onClick={() => onSelect(v.id)}
+            key={id}
+            onClick={() => onSelect(id)}
             className="vic-glass"
             style={{
               border: "1px solid rgba(69, 70, 77, 0.4)", borderRadius: 24,
@@ -47,13 +51,27 @@ export default function VoiceSelector({ onSelect }) {
               e.currentTarget.style.boxShadow = "none";
             }}
           >
-            <div style={{ ...labelStyle, marginBottom: 12 }}>voice</div>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              marginBottom: 12,
+            }}>
+              <div style={labelStyle}>voice</div>
+              <div style={{
+                width: 40, height: 40, borderRadius: "50%",
+                display: "grid", placeItems: "center",
+                background: "rgba(47, 217, 244, 0.1)",
+                border: "1px solid rgba(47, 217, 244, 0.25)",
+                color: "var(--vic-primary)",
+              }}>
+                <Icon size={20} strokeWidth={2} aria-hidden />
+              </div>
+            </div>
             <div style={{
               fontFamily: "'Space Grotesk', sans-serif",
               fontSize: 28, fontWeight: 700, marginBottom: 6,
               color: "var(--vic-on-surface)",
-            }}>{v.name}</div>
-            <div style={{ color: "var(--vic-on-surface-variant)", fontSize: 14 }}>{v.desc}</div>
+            }}>{name}</div>
+            <div style={{ color: "var(--vic-on-surface-variant)", fontSize: 14 }}>{desc}</div>
           </button>
         ))}
       </div>
