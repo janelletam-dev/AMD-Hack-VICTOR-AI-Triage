@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>V.I.C.T.O.R. — Day 1 Preview</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Clinical light theme — calm, hospital-appropriate.
+       "ink" tokens kept for backwards compatibility but remapped to the
+       light palette so existing component code reads sensibly:
+         ink-900 = page background (warm off-white)
+         ink-800 = panel surface (white)
+         ink-700 = subtle row hover / strip
+         ink-600 = panel border
+         ink-500 = stronger border / divider
+       "bone" tokens are now the text scale (darkest 50 → lightest 400). */
+    --ink-900:#f3f5f7;   /* page bg — soft cool off-white */
+    --ink-800:#ffffff;   /* panel surface */
+    --ink-700:#eef1f4;   /* hover / strip */
+    --ink-600:#dde2e8;   /* border */
+    --ink-500:#c4ccd6;   /* divider */
+
+    --bone-50:#0f1a2a;   /* primary text — deep navy ink */
+    --bone-100:#1d2a3d;  /* heading */
+    --bone-200:#465364;  /* secondary text */
+    --bone-400:#7a8696;  /* tertiary / labels */
+
+    --signal:#0e7c86;    /* clinical teal accent */
+    --signal-soft:#e3f2f3;
+    --flag:#b3261e;      /* attention red — used sparingly */
+    --flag-soft:#fdecea;
+    --ok:#2f7a3d;
+  }
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; margin: 0; }
+  body {
+    background: var(--ink-900); color: var(--bone-50);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; font-feature-settings: 'ss01','cv11';
+  }
+  .panel { box-shadow: 0 1px 2px rgba(15, 26, 42, 0.04); }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .label-mono { font-family:'JetBrains Mono',monospace; font-size:10.5px;
+    text-transform:uppercase; letter-spacing:0.18em; color:var(--bone-400); }
+  .panel { background:var(--ink-800); border:1px solid var(--ink-600); border-radius:8px; }
+  .panel-header { padding:14px 18px; border-bottom:1px solid var(--ink-600);
+    color:var(--bone-200); font-family:'JetBrains Mono',monospace;
+    font-size:11.5px; text-transform:uppercase; letter-spacing:0.16em; font-weight:500; }
+  button { font-family: inherit; cursor: pointer; }
+  /* router tab strip — only for the preview page */
+  .preview-tabs {
+    position:fixed; top:12px; left:50%; transform:translateX(-50%);
+    background:#ffffff; border:1px solid var(--ink-600);
+    border-radius:999px; padding:4px; display:flex; gap:2px; z-index:50;
+    box-shadow: 0 8px 24px rgba(15, 26, 42, 0.10);
+  }
+  .preview-tabs button {
+    background:transparent; border:none; color:var(--bone-200);
+    padding:6px 14px; border-radius:999px; font-size:12px;
+    font-family:'JetBrains Mono',monospace; letter-spacing:.08em; text-transform:uppercase;
+  }
+  .preview-tabs button.active { background:var(--signal); color:#ffffff; }
+  /* Pulse animation */
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+  @keyframes ping { 75%,100% { transform: scale(2); opacity: 0; } }
+  .ping { animation: ping 1.6s cubic-bezier(0,0,0.2,1) infinite; }
+  .text-balance { text-wrap: pretty; }
+  /* simple scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--ink-600); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, useCallback } = React;
+
+/* --------------------------------------------------------------------------
+ * Simulated backend events — the preview can't open a real WebSocket, so we
+ * synthesize the same event shapes (PRD §12.2) on a timer when the user
+ * clicks "Run demo" on the clinician dashboard.
+ * --------------------------------------------------------------------------*/
+const DEMO_EVENTS = [
+  { delay: 200,  type:"agent_activity", data:{ agent:"V.I.C.T.O.R.", status:"active", action:"Listening for first utterance" }},
+  { delay: 600,  type:"transcript",     data:{ text:"my stomach hurts and i feel nauseous", language:"en", is_final:true }},
+  { delay: 800,  type:"agent_activity", data:{ agent:"S.C.R.I.B.E.", status:"active", action:"Composing subjective" }},
+  { delay: 1100, type:"biomarker",      data:{ helios:{stress:0.72,distress:0.65,burnout:0.31,tiredness:0.44}, apollo:{anxiety:0.58,depression:0.22} }},
+  { delay: 1300, type:"agent_activity", data:{ agent:"M.E.R.C.E.D.", status:"active", action:"Evaluating concordance" }},
+  { delay: 1700, type:"concordance_flag", data:{
+      tier:1, trigger_phrase:"stomach hurts",
+      biomarker_signal:"stress: 0.72, anxiety: 0.58",
+      gloss:"Patient presents with abdominal pain (standard acuity 2.8) but voice biomarkers indicate elevated cardiovascular stress. In MIMIC-IV data, this presentation in female CVD patients was under-triaged. Recommend reassessment.",
+      agent:"M.E.R.C.E.D."
+  }},
+  { delay: 2200, type:"soap_update", data:{
+      subjective:"Patient reports stomach pain with associated nausea. Onset and duration not yet established.",
+      objective:"Thymia Helios — stress 0.72, distress 0.65, tiredness 0.44. Apollo — anxiety 0.58.",
+      assessment:"Tier 1 concordance flag: atypical CVD presentation. Abdominal pain in MIMIC-IV female CVD cohort averaged acuity 2.80 vs 2.15 for chest pain.",
+      plan:"Bedside 12-lead ECG, stat troponin, telemetry monitoring. Cardiology consult if elevated.",
+      agent:"S.C.R.I.B.E."
+  }},
+  { delay: 2400, type:"esi_update", data:{
+      standard_esi:3, victor_esi:2,
+      adjustment_reason:"Tier 1 concordance flag — atypical CVD presentation with elevated voice biomarkers"
+  }},
+  { delay: 2800, type:"agent_activity", data:{ agent:"V.I.C.T.O.R.", status:"active", action:"Escalation routed · ESI 2" }},
+];
+
+/* --------------------------------------------------------------------------
+ * Components — translated 1:1 from frontend/src/components/*.jsx
+ * --------------------------------------------------------------------------*/
+
+function VoiceSelector({ onSelect }) {
+  const voices = [
+    { id:"victor", name:"Victor", desc:"Calm, deliberate, lower register." },
+    { id:"jackie", name:"Jackie", desc:"Warm, attentive, higher register." },
+  ];
+  return (
+    <div style={{ maxWidth: 600, width:"100%" }}>
+      <div className="label-mono" style={{ textAlign:"center", marginBottom:12 }}>
+        choose who you'd like to speak with
+      </div>
+      <h2 style={{ fontSize:28, color:"var(--bone-50)", textAlign:"center", marginBottom:40, fontWeight:500 }}>
+        Both will listen the same way.
+      </h2>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        {voices.map(v => (
+          <button key={v.id} onClick={() => onSelect(v.id)}
+            className="panel"
+            style={{ padding:24, textAlign:"left", color:"var(--bone-50)" }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = "var(--signal)"}
+            onMouseLeave={e => e.currentTarget.style.borderColor = "var(--ink-600)"}>
+            <div className="label-mono" style={{ marginBottom:12 }}>voice</div>
+            <div style={{ fontSize:24, marginBottom:4 }}>{v.name}</div>
+            <div style={{ color:"var(--bone-400)", fontSize:14 }}>{v.desc}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MicButton({ recording, onStart, onStop }) {
+  return (
+    <div style={{ position:"relative", display:"inline-block" }}>
+      <button onClick={recording ? onStop : onStart}
+        style={{
+          position:"relative", width:112, height:112, borderRadius:"50%",
+          border: recording ? "1px solid var(--signal)" : "1px solid var(--ink-500)",
+          background: recording ? "var(--signal-soft)" : "var(--ink-700)",
+          color: recording ? "var(--signal)" : "var(--bone-200)",
+          transition:"all .2s",
+        }}>
+        {recording && <span className="ping" style={{
+          position:"absolute", inset:0, borderRadius:"50%", border:"1px solid var(--signal)"
+        }} />}
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ display:"block", margin:"0 auto" }}>
+          <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z" />
+          <path d="M19 11a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.92V20H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2.08A7 7 0 0 0 19 11z" />
+        </svg>
+      </button>
+      <div className="label-mono" style={{ position:"absolute", bottom:-28, left:0, right:0, textAlign:"center" }}>
+        {recording ? "listening" : "tap to speak"}
+      </div>
+    </div>
+  );
+}
+
+function Transcript({ lines }) {
+  return (
+    <div className="panel">
+      <div className="panel-header">live transcript</div>
+      <div style={{ padding:16, maxHeight:220, overflow:"auto", fontFamily:"'JetBrains Mono',monospace", fontSize:13, lineHeight:1.65 }}>
+        {lines.length === 0
+          ? <div style={{ color:"var(--bone-400)", fontStyle:"italic" }}>Awaiting audio…</div>
+          : lines.map((l,i)=>(
+              <div key={i} style={{ color: l.is_final ? "var(--bone-50)" : "var(--bone-400)" }}>
+                <span className="label-mono" style={{ marginRight:8 }}>{l.language || "—"}</span>
+                {l.text}
+              </div>
+            ))}
+      </div>
+    </div>
+  );
+}
+
+function Gauge({ label, value }) {
+  const pct = Math.round((value || 0) * 100);
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+        <span className="label-mono">{label}</span>
+        <span className="mono" style={{ fontSize:11, color:"var(--bone-100)" }}>{pct}</span>
+      </div>
+      <div style={{ height:6, background:"var(--ink-600)", borderRadius:999, overflow:"hidden" }}>
+        <div style={{ height:"100%", background:"var(--signal)", width: pct + "%", transition:"width .4s" }} />
+      </div>
+    </div>
+  );
+}
+
+function BiomarkerGauges({ data }) {
+  const helios = data?.helios || {};
+  const apollo = data?.apollo || {};
+  return (
+    <div className="panel">
+      <div className="panel-header">voice biomarkers · thymia</div>
+      <div style={{ padding:16, display:"grid", gap:10 }}>
+        <div className="label-mono" style={{ color:"var(--bone-200)" }}>helios</div>
+        <Gauge label="stress" value={helios.stress} />
+        <Gauge label="distress" value={helios.distress} />
+        <Gauge label="burnout" value={helios.burnout} />
+        <Gauge label="tiredness" value={helios.tiredness} />
+        <div className="label-mono" style={{ color:"var(--bone-200)", marginTop:6 }}>apollo</div>
+        <Gauge label="anxiety" value={apollo.anxiety} />
+        <Gauge label="depression" value={apollo.depression} />
+      </div>
+    </div>
+  );
+}
+
+function ConcordanceAlert({ flag }) {
+  if (!flag) return null;
+  const tone =
+    flag.tier === 1 ? { border:"var(--flag)", bg:"var(--flag-soft)" } :
+    flag.tier === 2 ? { border:"var(--signal)", bg:"var(--signal-soft)" } :
+    { border:"var(--ink-500)", bg:"var(--ink-700)" };
+  return (
+    <div style={{ margin:16, border:`1px solid ${tone.border}`, background:tone.bg, borderRadius:8, padding:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+        <div className="label-mono">concordance flag · tier {flag.tier}</div>
+        <div className="label-mono">{flag.agent || "M.E.R.C.E.D."}</div>
+      </div>
+      <div className="text-balance" style={{ color:"var(--bone-50)", lineHeight:1.55, marginBottom:8 }}>
+        {flag.gloss}
+      </div>
+      <div className="mono" style={{ fontSize:11, color:"var(--bone-400)" }}>
+        trigger: "{flag.trigger_phrase}" · {flag.biomarker_signal}
+      </div>
+    </div>
+  );
+}
+
+function SOAPNote({ note }) {
+  const sections = [
+    ["S","subjective", note?.subjective],
+    ["O","objective",  note?.objective],
+    ["A","assessment", note?.assessment],
+    ["P","plan",       note?.plan],
+  ];
+  return (
+    <div className="panel">
+      <div className="panel-header">soap note · S.C.R.I.B.E.</div>
+      <div style={{ padding:16, display:"grid", gap:14, fontSize:13 }}>
+        {sections.map(([k,name,body]) => (
+          <div key={k} style={{ display:"grid", gridTemplateColumns:"28px 1fr", gap:12 }}>
+            <div className="mono" style={{ color:"var(--signal)", fontSize:18 }}>{k}</div>
+            <div>
+              <div className="label-mono" style={{ marginBottom:4 }}>{name}</div>
+              <div style={{ color:"var(--bone-100)", lineHeight:1.55 }}>
+                {body || <span style={{ color:"var(--bone-400)", fontStyle:"italic" }}>—</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// V.I.C.T.O.R. is the hub at the center. The four others sit on a ring
+// around it. Coordinates are within a 280×260 viewBox.
+const AGENT_NODES = {
+  "V.I.C.T.O.R.": { x:140, y:130, role:"triage leader",  short:"VIC" },
+  "M.E.R.C.E.D.": { x: 40, y: 50, role:"concordance",    short:"MER" },
+  "S.C.R.I.B.E.": { x:240, y: 50, role:"soap note",      short:"SCR" },
+  "J.A.C.K.I.E.": { x: 40, y:210, role:"patient voice",  short:"JAC" },
+  "E.L.M.E.R.":   { x:240, y:210, role:"evidence",       short:"ELM" },
+};
+const AGENT_ORDER = ["V.I.C.T.O.R.","M.E.R.C.E.D.","S.C.R.I.B.E.","J.A.C.K.I.E.","E.L.M.E.R."];
+const EDGES = [
+  ["V.I.C.T.O.R.","M.E.R.C.E.D."],
+  ["V.I.C.T.O.R.","S.C.R.I.B.E."],
+  ["V.I.C.T.O.R.","J.A.C.K.I.E."],
+  ["V.I.C.T.O.R.","E.L.M.E.R."],
+];
+
+function SwarmProcessor({ activity, logs }) {
+  return (
+    <div className="panel" style={{ display:"flex", flexDirection:"column", minHeight:0 }}>
+      <div className="panel-header">swarm processor</div>
+
+      {/* Graph */}
+      <div style={{ padding:"16px 12px 8px" }}>
+        <svg viewBox="0 0 280 260" style={{ width:"100%", display:"block" }}>
+          <defs>
+            <radialGradient id="hubGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(14,124,134,0.18)" />
+              <stop offset="100%" stopColor="rgba(14,124,134,0)" />
+            </radialGradient>
+            <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="1.6" />
+            </filter>
+          </defs>
+
+          {/* Edges */}
+          {EDGES.map(([a, b]) => {
+            const A = AGENT_NODES[a], B = AGENT_NODES[b];
+            const liveA = activity[a]?.status === "active";
+            const liveB = activity[b]?.status === "active";
+            const live = liveA && liveB;
+            return (
+              <g key={a + b}>
+                <line x1={A.x} y1={A.y} x2={B.x} y2={B.y}
+                  stroke={live ? "var(--signal)" : "var(--ink-500)"}
+                  strokeWidth={live ? 1.4 : 0.8}
+                  strokeOpacity={live ? 0.9 : 0.5}
+                  style={{ transition:"all .3s" }} />
+                {live && (
+                  <circle r="2.4" fill="var(--signal)">
+                    <animateMotion dur="1.4s" repeatCount="indefinite"
+                      path={`M ${A.x} ${A.y} L ${B.x} ${B.y}`} />
+                  </circle>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Hub glow */}
+          <circle cx={AGENT_NODES["V.I.C.T.O.R."].x} cy={AGENT_NODES["V.I.C.T.O.R."].y}
+                  r="42" fill="url(#hubGlow)" />
+
+          {/* Nodes */}
+          {AGENT_ORDER.map((id) => {
+            const n = AGENT_NODES[id];
+            const live = activity[id]?.status === "active";
+            const isHub = id === "V.I.C.T.O.R.";
+            const r = isHub ? 22 : 18;
+            return (
+              <g key={id}>
+                {live && (
+                  <circle cx={n.x} cy={n.y} r={r + 6}
+                    fill="none" stroke="var(--signal)" strokeWidth="1"
+                    opacity="0.5" filter="url(#soft)">
+                    <animate attributeName="r" from={r + 2} to={r + 12}
+                             dur="1.6s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" from="0.6" to="0"
+                             dur="1.6s" repeatCount="indefinite" />
+                  </circle>
+                )}
+                <circle cx={n.x} cy={n.y} r={r}
+                  fill={live ? "var(--signal-soft)" : "var(--ink-800)"}
+                  stroke={live ? "var(--signal)" : (isHub ? "var(--bone-400)" : "var(--ink-500)")}
+                  strokeWidth={isHub ? 1.4 : 1}
+                  style={{ transition:"all .3s" }} />
+                <text x={n.x} y={n.y + 1} textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontSize={isHub ? 10 : 9}
+                  fontWeight={isHub ? 600 : 500}
+                  fill={live ? "var(--signal)" : "var(--bone-100)"}>
+                  {n.short}
+                </text>
+                <text x={n.x} y={n.y + r + 12} textAnchor="middle"
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontSize="8" letterSpacing="0.12em"
+                  fill="var(--bone-400)">
+                  {n.role.toUpperCase()}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Active agent strip */}
+      <div style={{ padding:"4px 16px 12px", display:"grid", gap:6 }}>
+        {AGENT_ORDER.map((id) => {
+          const act = activity[id];
+          if (!act?.action) return null;
+          return (
+            <div key={id} style={{ display:"grid", gridTemplateColumns:"86px 1fr", gap:10, alignItems:"baseline" }}>
+              <div className="mono" style={{
+                fontSize:10, color: act.status==="active" ? "var(--signal)" : "var(--bone-400)",
+                letterSpacing:"0.08em",
+              }}>{id}</div>
+              <div style={{ fontSize:12, color:"var(--bone-100)", lineHeight:1.45 }}>
+                {act.action}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Logs */}
+      <div style={{ marginTop:"auto", borderTop:"1px solid var(--ink-600)", padding:"12px 16px", maxHeight:140, overflow:"auto" }}>
+        <div className="label-mono" style={{ marginBottom:8 }}>processing logs</div>
+        <div className="mono" style={{ fontSize:10.5, color:"var(--bone-400)", lineHeight:1.7 }}>
+          {logs.length === 0
+            ? "awaiting first event…"
+            : logs.slice(-12).map((l, i) => (
+                <div key={i}>
+                  <span style={{ color:"var(--bone-200)" }}>{l.t}</span>
+                  {"  "}
+                  <span style={{ color:"var(--signal)" }}>{l.agent}</span>
+                  {"  "}
+                  {l.msg}
+                </div>
+              ))
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const QUEUE = [
+  { id:"demo",  name:"Patient · demo",   cc:"stomach pain",   status:"Escalated"   },
+  { id:"r-002", name:"—",                cc:"chest pain",     status:"Urgent"      },
+  { id:"r-003", name:"—",                cc:"fall",           status:"Standard"    },
+  { id:"r-004", name:"—",                cc:"headache",       status:"Standard"    },
+  { id:"r-005", name:"—",                cc:"ankle sprain",   status:"Observation" },
+];
+const TONE = {
+  Escalated:"var(--flag)", Urgent:"var(--signal)",
+  Standard:"var(--bone-200)", Observation:"var(--bone-400)", Discharged:"var(--bone-400)",
+};
+
+function PatientQueue({ activeRoom, onSelect }) {
+  return (
+    <div className="panel" style={{ display:"flex", flexDirection:"column", minHeight:0 }}>
+      <div className="panel-header">patient queue</div>
+      <div style={{ overflow:"auto" }}>
+        {QUEUE.map(p => {
+          const active = p.id === activeRoom;
+          return (
+            <button key={p.id} onClick={() => onSelect(p.id)}
+              style={{
+                width:"100%", textAlign:"left", padding:"12px 16px",
+                borderBottom:"1px solid var(--ink-700)",
+                background: active ? "var(--ink-700)" : "transparent",
+                color:"var(--bone-100)", border:"none",
+              }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+                <div style={{ fontSize:13 }}>{p.name}</div>
+                <div className="label-mono" style={{ color: TONE[p.status] }}>{p.status}</div>
+              </div>
+              <div style={{ fontSize:11, color:"var(--bone-400)" }}>{p.cc}</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ESIComparison({ esi }) {
+  const std = esi?.standard_esi ?? "—";
+  const adj = esi?.victor_esi ?? "—";
+  return (
+    <div className="panel">
+      <div className="panel-header">ESI score</div>
+      <div style={{ padding:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          <div>
+            <div className="label-mono" style={{ marginBottom:4 }}>standard</div>
+            <div className="mono" style={{ fontSize:30, color:"var(--bone-200)" }}>{std}</div>
+          </div>
+          <div>
+            <div className="label-mono" style={{ marginBottom:4 }}>V.I.C.T.O.R.</div>
+            <div className="mono" style={{ fontSize:30, color:"var(--signal)" }}>{adj}</div>
+          </div>
+        </div>
+        <div style={{ fontSize:11, color:"var(--bone-400)", marginTop:12, lineHeight:1.5 }}>
+          {esi?.adjustment_reason || "Awaiting evidence — score updates as concordance signals arrive."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------------------
+ * Pages
+ * --------------------------------------------------------------------------*/
+
+function PatientView() {
+  const [step, setStep] = useState("welcome");
+  const [voice, setVoice] = useState(null);
+  const [recording, setRecording] = useState(false);
+  const [framesSent, setFramesSent] = useState(0);
+  const [room] = useState(() => "room-" + Math.random().toString(36).slice(2, 8));
+
+  // Simulated frame counter while "recording"
+  useEffect(() => {
+    if (!recording) return;
+    const id = setInterval(() => setFramesSent(n => n + 1), 40); // 25 frames/sec
+    return () => clearInterval(id);
+  }, [recording]);
+
+  return (
+    <div style={{ minHeight:"100%", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+      {step === "welcome" && (
+        <div style={{ maxWidth:480, width:"100%", textAlign:"center" }}>
+          <div className="label-mono" style={{ marginBottom:16 }}>welcome</div>
+          <h1 style={{ fontSize:30, color:"var(--bone-50)", marginBottom:12, fontWeight:500 }}>
+            We'll get you seen.
+          </h1>
+          <p style={{ color:"var(--bone-200)", marginBottom:40, lineHeight:1.65 }}>
+            Answer a few quick questions out loud. It helps the care team understand
+            what's going on before you're seen, so the right clinician reaches you
+            sooner. Your responses are kept private and used only for your visit.
+          </p>
+          <button onClick={() => setStep("select")}
+            style={{ padding:"12px 28px", background:"var(--bone-50)", color:"var(--ink-900)",
+              borderRadius:6, fontWeight:500, border:"none", fontSize:15 }}>
+            Begin
+          </button>
+        </div>
+      )}
+
+      {step === "select" && <VoiceSelector onSelect={(v) => { setVoice(v); setStep("interview"); }} />}
+
+      {step === "interview" && (
+        <div style={{ maxWidth:480, width:"100%", textAlign:"center" }}>
+          <div className="label-mono" style={{ marginBottom:8 }}>
+            speaking with {voice} · simulated
+          </div>
+          <h2 style={{ fontSize:24, color:"var(--bone-50)", marginBottom:8 }}>
+            Tell me what's been going on.
+          </h2>
+          <p style={{ fontSize:13, color:"var(--bone-400)", marginBottom:48 }}>
+            Take your time. I'll ask a few follow-up questions.
+          </p>
+          <MicButton recording={recording}
+            onStart={() => setRecording(true)}
+            onStop={() => { setRecording(false); setTimeout(() => setStep("done"), 200); }} />
+          <div className="label-mono" style={{ marginTop:48 }}>
+            frames sent · {framesSent}
+          </div>
+        </div>
+      )}
+
+      {step === "done" && (
+        <div style={{ maxWidth:480, width:"100%", textAlign:"center" }}>
+          <div className="label-mono" style={{ marginBottom:16 }}>thank you</div>
+          <h2 style={{ fontSize:24, color:"var(--bone-50)", marginBottom:12 }}>
+            A clinician will see you shortly.
+          </h2>
+          <p style={{ fontSize:13, color:"var(--bone-400)", marginBottom:8 }}>Session ID</p>
+          <p className="mono" style={{ color:"var(--bone-100)" }}>{room}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClinicianDashboard() {
+  const [activeRoom, setActiveRoom] = useState("demo");
+  const [transcriptLines, setTranscript] = useState([]);
+  const [biomarkers, setBiomarkers] = useState(null);
+  const [flags, setFlags] = useState([]);
+  const [soap, setSoap] = useState(null);
+  const [esi, setEsi] = useState(null);
+  const [agentActivity, setActivity] = useState({});
+  const [logs, setLogs] = useState([]);
+  const [running, setRunning] = useState(false);
+
+  const reset = () => {
+    setTranscript([]); setBiomarkers(null); setFlags([]); setSoap(null); setEsi(null); setActivity({}); setLogs([]);
+  };
+
+  const runDemo = () => {
+    reset(); setRunning(true);
+    const t0 = Date.now();
+    DEMO_EVENTS.forEach(({ delay, type, data }) => {
+      setTimeout(() => {
+        const ts = ((Date.now() - t0) / 1000).toFixed(2) + "s";
+        if (type === "transcript") {
+          setTranscript(prev => [...prev, data]);
+          setLogs(prev => [...prev, { t: ts, agent: "DEEPGRAM", msg: `"${data.text}"` }]);
+        } else if (type === "biomarker") {
+          setBiomarkers(data);
+          setLogs(prev => [...prev, { t: ts, agent: "THYMIA", msg: `helios stress ${data.helios.stress.toFixed(2)} · apollo anxiety ${data.apollo.anxiety.toFixed(2)}` }]);
+        } else if (type === "concordance_flag") {
+          setFlags(prev => [data, ...prev]);
+          setLogs(prev => [...prev, { t: ts, agent: "M.E.R.C.E.D.", msg: `tier ${data.tier} flag · trigger: ${data.trigger_phrase}` }]);
+        } else if (type === "soap_update") {
+          setSoap(data);
+          setLogs(prev => [...prev, { t: ts, agent: "S.C.R.I.B.E.", msg: "SOAP note updated" }]);
+        } else if (type === "esi_update") {
+          setEsi(data);
+          setLogs(prev => [...prev, { t: ts, agent: "V.I.C.T.O.R.", msg: `ESI ${data.standard_esi} → ${data.victor_esi}` }]);
+        } else if (type === "agent_activity") {
+          setActivity(prev => ({ ...prev, [data.agent]: data }));
+          setLogs(prev => [...prev, { t: ts, agent: data.agent, msg: data.action }]);
+        }
+      }, delay);
+    });
+    setTimeout(() => setRunning(false), 3200);
+  };
+
+  return (
+    <div style={{ height:"100vh", display:"flex", flexDirection:"column" }}>
+      <header style={{
+        padding:"12px 24px", borderBottom:"1px solid var(--ink-700)",
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+      }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:12 }}>
+          <div className="mono" style={{ color:"var(--bone-100)", letterSpacing:"0.22em", fontSize:14 }}>
+            V.I.C.T.O.R.
+          </div>
+          <div className="label-mono">clinician dashboard</div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+          <button onClick={runDemo} disabled={running}
+            style={{
+              padding:"6px 14px", borderRadius:4,
+              background: running ? "var(--ink-600)" : "var(--bone-50)",
+              color: running ? "var(--bone-400)" : "var(--ink-900)",
+              border:"none", fontSize:12, fontWeight:500,
+            }}>
+            {running ? "Running…" : "Run demo"}
+          </button>
+          <div className="label-mono">room · {activeRoom}</div>
+          <div className="label-mono" style={{ color:"var(--ok)" }}>ws · simulated</div>
+        </div>
+      </header>
+
+      <div style={{
+        flex:1, display:"grid", gridTemplateColumns:"240px 1fr 360px",
+        gap:14, padding:14, minHeight:0,
+      }}>
+        <PatientQueue activeRoom={activeRoom} onSelect={setActiveRoom} />
+
+        <div className="panel" style={{ display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
+          <div className="panel-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span>clinical detail</span>
+            <span style={{ color:"var(--bone-400)", textTransform:"none", letterSpacing:"normal", fontSize:12, fontFamily:"Inter" }}>
+              Bed 12 · Patient unknown
+            </span>
+          </div>
+          <div style={{ flex:1, overflow:"auto" }}>
+            <ConcordanceAlert flag={flags[0]} />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, padding:16 }}>
+              <ESIComparison esi={esi} />
+              <BiomarkerGauges data={biomarkers} />
+            </div>
+            <div style={{ padding:"0 16px 16px" }}>
+              <Transcript lines={transcriptLines} />
+            </div>
+            <div style={{ padding:"0 16px 16px" }}>
+              <SOAPNote note={soap} />
+            </div>
+          </div>
+          <div style={{
+            borderTop:"1px solid var(--ink-600)", padding:"12px 16px",
+            display:"flex", gap:8, justifyContent:"flex-end", background:"var(--ink-700)",
+          }}>
+            <button style={btn("ghost")}>Edit</button>
+            <button style={btn("ghost")}>Downgrade</button>
+            <button style={btn("primary")}>Approve &amp; Push</button>
+          </div>
+        </div>
+
+        <SwarmProcessor activity={agentActivity} logs={logs} />
+      </div>
+    </div>
+  );
+}
+
+function btn(kind) {
+  if (kind === "primary") return {
+    padding:"6px 12px", fontSize:13, fontWeight:500,
+    background:"var(--bone-50)", color:"var(--ink-900)",
+    border:"none", borderRadius:4,
+  };
+  return {
+    padding:"6px 12px", fontSize:13, color:"var(--bone-200)",
+    border:"1px solid var(--ink-500)", borderRadius:4, background:"transparent",
+  };
+}
+
+/* --------------------------------------------------------------------------
+ * Preview shell — "router"
+ * --------------------------------------------------------------------------*/
+
+function App() {
+  const [route, setRoute] = useState("clinician"); // patient | clinician
+  return (
+    <div data-screen-label={route === "patient" ? "01 Patient kiosk" : "02 Clinician dashboard"}
+         style={{ height:"100%" }}>
+      <div className="preview-tabs">
+        <button onClick={() => setRoute("patient")}   className={route==="patient"?"active":""}>/ patient</button>
+        <button onClick={() => setRoute("clinician")} className={route==="clinician"?"active":""}>/ clinician</button>
+      </div>
+      {route === "patient" ? <PatientView /> : <ClinicianDashboard />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,1381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>V.I.C.T.O.R. — Day 1 Preview</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Clinical light theme — calm, hospital-appropriate.
+       "ink" tokens kept for backwards compatibility but remapped to the
+       light palette so existing component code reads sensibly:
+         ink-900 = page background (warm off-white)
+         ink-800 = panel surface (white)
+         ink-700 = subtle row hover / strip
+         ink-600 = panel border
+         ink-500 = stronger border / divider
+       "bone" tokens are now the text scale (darkest 50 → lightest 400). */
+    --ink-900:#f3f5f7;   /* page bg — soft cool off-white */
+    --ink-800:#ffffff;   /* panel surface */
+    --ink-700:#eef1f4;   /* hover / strip */
+    --ink-600:#dde2e8;   /* border */
+    --ink-500:#c4ccd6;   /* divider */
+
+    --bone-50:#0f1a2a;   /* primary text — deep navy ink */
+    --bone-100:#1d2a3d;  /* heading */
+    --bone-200:#465364;  /* secondary text */
+    --bone-400:#7a8696;  /* tertiary / labels */
+
+    --signal:#0e7c86;    /* clinical teal accent */
+    --signal-soft:#e3f2f3;
+    --flag:#b3261e;      /* attention red — used sparingly */
+    --flag-soft:#fdecea;
+    --ok:#2f7a3d;
+  }
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; margin: 0; }
+  body {
+    background: var(--ink-900); color: var(--bone-50);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; font-feature-settings: 'ss01','cv11';
+  }
+  .panel { box-shadow: 0 1px 2px rgba(15, 26, 42, 0.04); }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .label-mono { font-family:'JetBrains Mono',monospace; font-size:10.5px;
+    text-transform:uppercase; letter-spacing:0.18em; color:var(--bone-400); }
+  .panel { background:var(--ink-800); border:1px solid var(--ink-600); border-radius:8px; }
+  .panel-header { padding:14px 18px; border-bottom:1px solid var(--ink-600);
+    color:var(--bone-200); font-family:'JetBrains Mono',monospace;
+    font-size:11.5px; text-transform:uppercase; letter-spacing:0.16em; font-weight:500; }
+  button { font-family: inherit; cursor: pointer; }
+  /* router tab strip — only for the preview page */
+  .preview-tabs {
+    position:fixed; top:12px; left:50%; transform:translateX(-50%);
+    background:#ffffff; border:1px solid var(--ink-600);
+    border-radius:999px; padding:4px; display:flex; gap:2px; z-index:50;
+    box-shadow: 0 8px 24px rgba(15, 26, 42, 0.10);
+  }
+  .preview-tabs button {
+    background:transparent; border:none; color:var(--bone-200);
+    padding:6px 14px; border-radius:999px; font-size:12px;
+    font-family:'JetBrains Mono',monospace; letter-spacing:.08em; text-transform:uppercase;
+  }
+  .preview-tabs button.active { background:var(--signal); color:#ffffff; }
+  /* Pulse animation */
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+  @keyframes ping { 75%,100% { transform: scale(2); opacity: 0; } }
+  .ping { animation: ping 1.6s cubic-bezier(0,0,0.2,1) infinite; }
+  .text-balance { text-wrap: pretty; }
+  /* simple scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--ink-600); border-radius: 4px; }
+
+  /* ---------- Epic-style EMR chrome (clinician dashboard only) ----------
+     Tokens picked to evoke Epic Hyperspace without copying it directly.   */
+  :root {
+    --epic-titlebar:    #2c5e9e;   /* dark blue title bar */
+    --epic-titlebar-2:  #3f78bd;
+    --epic-banner:      #d9e7f4;   /* patient banner light blue */
+    --epic-banner-2:    #c9dcef;
+    --epic-toolbar:     #edf2f8;   /* toolbar background */
+    --epic-rail:        #e7eef6;   /* left activity rail */
+    --epic-rail-active: #ffffff;
+    --epic-row:         #ffffff;
+    --epic-row-alt:     #f5f8fb;
+    --epic-row-hover:   #fff7d6;   /* Epic-style yellow hover */
+    --epic-band:        #c5e3c2;   /* green section header (like Sacraments band) */
+    --epic-band-text:   #1f4d22;
+    --epic-band-2:      #d8edd6;
+    --epic-grid:        #b8c4d4;   /* table grid line */
+    --epic-grid-soft:   #dde5ee;
+    --epic-link:        #1a5fb4;
+    --epic-warn-bg:     #fff5b0;   /* yellow allergy/alert chip */
+    --epic-warn-bd:     #d6a800;
+    --epic-flag-bg:     #fde0db;
+    --epic-flag-bd:     #b3261e;
+  }
+  .epic-root {
+    font-family: 'Segoe UI', Tahoma, 'Inter', system-ui, sans-serif;
+    font-size: 12px; color: #1a2332;
+    background: #cdd9e6;
+  }
+  .epic-titlebar {
+    height: 26px; padding: 0 10px;
+    background: linear-gradient(to bottom, var(--epic-titlebar-2), var(--epic-titlebar));
+    color: #fff; font-size: 12px;
+    display: flex; align-items: center; gap: 14px;
+    border-bottom: 1px solid #1d4377;
+  }
+  .epic-titlebar .lozenge {
+    background: rgba(255,255,255,0.16); padding: 2px 8px; border-radius: 3px;
+    font-size: 11px; letter-spacing: 0.02em;
+  }
+  .epic-menubar {
+    height: 22px; padding: 0 8px; display: flex; gap: 14px; align-items: center;
+    background: #e8eef6; border-bottom: 1px solid #b6c4d6;
+    font-size: 11.5px; color: #1a2332;
+  }
+  .epic-menubar span { padding: 2px 4px; }
+  .epic-menubar span:hover { background: #c8d8ec; }
+  .epic-banner {
+    background: linear-gradient(to bottom, #e6eef8, var(--epic-banner));
+    border-bottom: 1px solid #95acc7;
+    padding: 6px 12px;
+  }
+  .epic-banner-name { font-size: 14px; font-weight: 600; color: #0f2547; }
+  .epic-banner-row {
+    display: grid; grid-template-columns: repeat(6, 1fr);
+    gap: 4px 18px; font-size: 11px; color: #1a2332; margin-top: 4px;
+  }
+  .epic-banner-row .lbl { color: #4a5b75; margin-right: 4px; }
+  .epic-banner-row .alert { background: var(--epic-warn-bg);
+    border: 1px solid var(--epic-warn-bd); padding: 1px 6px; border-radius: 2px;
+    font-weight: 600; color: #5a4400; }
+  .epic-tabs {
+    display: flex; height: 24px; background: #d6e0ec;
+    border-bottom: 1px solid #95acc7; padding: 0 4px; gap: 1px;
+  }
+  .epic-tabs .tab {
+    padding: 4px 12px; font-size: 11px; cursor: pointer;
+    background: #c8d6e6; color: #1a2332;
+    border: 1px solid #95acc7; border-bottom: none;
+    border-radius: 3px 3px 0 0; align-self: flex-end;
+    line-height: 1; padding-top: 5px;
+  }
+  .epic-tabs .tab.active {
+    background: #ffffff; color: #0f2547; font-weight: 600;
+    border-bottom: 1px solid #ffffff;
+    margin-bottom: -1px; z-index: 2;
+  }
+  .epic-toolbar {
+    background: var(--epic-toolbar); border-bottom: 1px solid #b6c4d6;
+    padding: 6px 8px; display: flex; gap: 2px; align-items: stretch;
+    overflow-x: auto;
+  }
+  .epic-tool {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 4px 8px; min-width: 56px; cursor: pointer;
+    border: 1px solid transparent; border-radius: 3px;
+    color: #1a2332; font-size: 10.5px;
+  }
+  .epic-tool:hover { background: #fff; border-color: #b6c4d6; }
+  .epic-tool .ico {
+    width: 22px; height: 22px; display: grid; place-items: center;
+    background: #f8fbff; border: 1px solid #c0cee0; border-radius: 3px;
+  }
+  .epic-tool.active .ico { background: #fff7d6; border-color: var(--epic-warn-bd); }
+  .epic-tool-sep { width: 1px; background: #cdd9e6; margin: 4px 4px; }
+  .epic-rail {
+    width: 132px; background: var(--epic-rail);
+    border-right: 1px solid #b6c4d6; padding: 4px 0; overflow-y: auto;
+  }
+  .epic-rail .item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px; cursor: pointer; font-size: 11.5px;
+    color: #1a2332; border-bottom: 1px solid #d6dfeb;
+  }
+  .epic-rail .item .ico {
+    width: 18px; height: 18px; display: grid; place-items: center;
+    background: #fff; border: 1px solid #c0cee0; border-radius: 3px;
+    font-size: 10px; color: var(--epic-link);
+  }
+  .epic-rail .item:hover { background: #fff7d6; }
+  .epic-rail .item.active {
+    background: var(--epic-rail-active); font-weight: 600; color: #0f2547;
+    border-left: 3px solid var(--epic-link);
+    padding-left: 5px;
+  }
+  .epic-rail .item.active .ico { background: #fff7d6; border-color: var(--epic-warn-bd); }
+  .epic-section {
+    border: 1px solid #b6c4d6; background: #fff; margin-bottom: 6px;
+  }
+  .epic-band {
+    background: linear-gradient(to bottom, var(--epic-band-2), var(--epic-band));
+    color: var(--epic-band-text);
+    padding: 3px 8px; font-size: 11.5px; font-weight: 600;
+    border-bottom: 1px solid #8eb98c;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .epic-band .meta { font-weight: 400; color: #2f5a31; font-size: 10.5px; }
+  .epic-row {
+    display: grid; grid-template-columns: 220px 1fr;
+    border-bottom: 1px solid var(--epic-grid-soft); min-height: 22px;
+  }
+  .epic-row .k {
+    padding: 3px 8px; background: var(--epic-row-alt); color: #1a2332;
+    border-right: 1px solid var(--epic-grid-soft);
+    font-size: 11.5px;
+  }
+  .epic-row .v { padding: 3px 8px; color: #1a2332; font-size: 11.5px; }
+  .epic-row:hover { background: var(--epic-row-hover); }
+  .epic-row:hover .k { background: transparent; }
+  .epic-flag-bar {
+    background: var(--epic-flag-bg); border: 1px solid var(--epic-flag-bd);
+    border-left-width: 4px; padding: 6px 10px; margin: 6px;
+    color: #5a0e0a; font-size: 11.5px;
+  }
+  .epic-btn {
+    background: linear-gradient(to bottom, #fafcff, #dbe5f3);
+    border: 1px solid #95acc7; border-radius: 3px;
+    padding: 3px 10px; font-size: 11.5px; color: #1a2332; cursor: pointer;
+  }
+  .epic-btn:hover { background: linear-gradient(to bottom, #fff, #c8d8ec); }
+  .epic-btn.primary {
+    background: linear-gradient(to bottom, #5a91d4, #2c5e9e); color: #fff;
+    border-color: #1d4377; font-weight: 600;
+  }
+  .epic-btn.primary:hover { background: linear-gradient(to bottom, #6ea3e4, #3f78bd); }
+  .epic-statusbar {
+    height: 20px; background: linear-gradient(to bottom, #e8eef6, #c8d6e6);
+    border-top: 1px solid #95acc7;
+    padding: 0 10px; display: flex; align-items: center; gap: 14px;
+    font-size: 11px; color: #1a2332;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, useCallback } = React;
+
+/* --------------------------------------------------------------------------
+ * Simulated backend events — the preview can't open a real WebSocket, so we
+ * synthesize the same event shapes (PRD §12.2) on a timer when the user
+ * clicks "Run demo" on the clinician dashboard.
+ * --------------------------------------------------------------------------*/
+const DEMO_EVENTS = [
+  { delay: 200,  type:"agent_activity", data:{ agent:"V.I.C.T.O.R.", status:"active", action:"Listening for first utterance" }},
+  { delay: 600,  type:"transcript",     data:{ text:"my stomach hurts and i feel nauseous", language:"en", is_final:true }},
+  { delay: 800,  type:"agent_activity", data:{ agent:"S.C.R.I.B.E.", status:"active", action:"Composing subjective" }},
+  { delay: 1100, type:"biomarker",      data:{ helios:{stress:0.72,distress:0.65,burnout:0.31,tiredness:0.44}, apollo:{anxiety:0.58,depression:0.22} }},
+  { delay: 1300, type:"agent_activity", data:{ agent:"M.E.R.C.E.D.", status:"active", action:"Evaluating concordance" }},
+  { delay: 1700, type:"concordance_flag", data:{
+      tier:1, trigger_phrase:"stomach hurts",
+      biomarker_signal:"stress: 0.72, anxiety: 0.58",
+      gloss:"Patient presents with abdominal pain (standard acuity 2.8) but voice biomarkers indicate elevated cardiovascular stress. In MIMIC-IV data, this presentation in female CVD patients was under-triaged. Recommend reassessment.",
+      agent:"M.E.R.C.E.D."
+  }},
+  { delay: 2200, type:"soap_update", data:{
+      subjective:"Patient reports stomach pain with associated nausea. Onset and duration not yet established.",
+      objective:"Thymia Helios — stress 0.72, distress 0.65, tiredness 0.44. Apollo — anxiety 0.58.",
+      assessment:"Tier 1 concordance flag: atypical CVD presentation. Abdominal pain in MIMIC-IV female CVD cohort averaged acuity 2.80 vs 2.15 for chest pain.",
+      plan:"Bedside 12-lead ECG, stat troponin, telemetry monitoring. Cardiology consult if elevated.",
+      agent:"S.C.R.I.B.E."
+  }},
+  { delay: 2400, type:"esi_update", data:{
+      standard_esi:3, victor_esi:2,
+      adjustment_reason:"Tier 1 concordance flag — atypical CVD presentation with elevated voice biomarkers"
+  }},
+  { delay: 2800, type:"agent_activity", data:{ agent:"V.I.C.T.O.R.", status:"active", action:"Escalation routed · ESI 2" }},
+];
+
+/* --------------------------------------------------------------------------
+ * Components — translated 1:1 from frontend/src/components/*.jsx
+ * --------------------------------------------------------------------------*/
+
+function VoiceSelector({ onSelect }) {
+  const voices = [
+    { id:"victor", name:"Victor", desc:"Calm, deliberate, lower register." },
+    { id:"jackie", name:"Jackie", desc:"Warm, attentive, higher register." },
+  ];
+  return (
+    <div style={{ maxWidth: 600, width:"100%" }}>
+      <div className="label-mono" style={{ textAlign:"center", marginBottom:12 }}>
+        choose who you'd like to speak with
+      </div>
+      <h2 style={{ fontSize:28, color:"var(--bone-50)", textAlign:"center", marginBottom:40, fontWeight:500 }}>
+        Both will listen the same way.
+      </h2>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+        {voices.map(v => (
+          <button key={v.id} onClick={() => onSelect(v.id)}
+            className="panel"
+            style={{ padding:24, textAlign:"left", color:"var(--bone-50)" }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = "var(--signal)"}
+            onMouseLeave={e => e.currentTarget.style.borderColor = "var(--ink-600)"}>
+            <div className="label-mono" style={{ marginBottom:12 }}>voice</div>
+            <div style={{ fontSize:24, marginBottom:4 }}>{v.name}</div>
+            <div style={{ color:"var(--bone-400)", fontSize:14 }}>{v.desc}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MicButton({ recording, onStart, onStop }) {
+  return (
+    <div style={{ position:"relative", display:"inline-block" }}>
+      <button onClick={recording ? onStop : onStart}
+        style={{
+          position:"relative", width:112, height:112, borderRadius:"50%",
+          border: recording ? "1px solid var(--signal)" : "1px solid var(--ink-500)",
+          background: recording ? "var(--signal-soft)" : "var(--ink-700)",
+          color: recording ? "var(--signal)" : "var(--bone-200)",
+          transition:"all .2s",
+        }}>
+        {recording && <span className="ping" style={{
+          position:"absolute", inset:0, borderRadius:"50%", border:"1px solid var(--signal)"
+        }} />}
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor" style={{ display:"block", margin:"0 auto" }}>
+          <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z" />
+          <path d="M19 11a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.92V20H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2.08A7 7 0 0 0 19 11z" />
+        </svg>
+      </button>
+      <div className="label-mono" style={{ position:"absolute", bottom:-28, left:0, right:0, textAlign:"center" }}>
+        {recording ? "listening" : "tap to speak"}
+      </div>
+    </div>
+  );
+}
+
+function Transcript({ lines }) {
+  return (
+    <div className="panel">
+      <div className="panel-header">live transcript</div>
+      <div style={{ padding:16, maxHeight:220, overflow:"auto", fontFamily:"'JetBrains Mono',monospace", fontSize:13, lineHeight:1.65 }}>
+        {lines.length === 0
+          ? <div style={{ color:"var(--bone-400)", fontStyle:"italic" }}>Awaiting audio…</div>
+          : lines.map((l,i)=>(
+              <div key={i} style={{ color: l.is_final ? "var(--bone-50)" : "var(--bone-400)" }}>
+                <span className="label-mono" style={{ marginRight:8 }}>{l.language || "—"}</span>
+                {l.text}
+              </div>
+            ))}
+      </div>
+    </div>
+  );
+}
+
+function Gauge({ label, value }) {
+  const pct = Math.round((value || 0) * 100);
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+        <span className="label-mono">{label}</span>
+        <span className="mono" style={{ fontSize:11, color:"var(--bone-100)" }}>{pct}</span>
+      </div>
+      <div style={{ height:6, background:"var(--ink-600)", borderRadius:999, overflow:"hidden" }}>
+        <div style={{ height:"100%", background:"var(--signal)", width: pct + "%", transition:"width .4s" }} />
+      </div>
+    </div>
+  );
+}
+
+function BiomarkerGauges({ data }) {
+  const helios = data?.helios || {};
+  const apollo = data?.apollo || {};
+  return (
+    <div className="panel">
+      <div className="panel-header">voice biomarkers · thymia</div>
+      <div style={{ padding:16, display:"grid", gap:10 }}>
+        <div className="label-mono" style={{ color:"var(--bone-200)" }}>helios</div>
+        <Gauge label="stress" value={helios.stress} />
+        <Gauge label="distress" value={helios.distress} />
+        <Gauge label="burnout" value={helios.burnout} />
+        <Gauge label="tiredness" value={helios.tiredness} />
+        <div className="label-mono" style={{ color:"var(--bone-200)", marginTop:6 }}>apollo</div>
+        <Gauge label="anxiety" value={apollo.anxiety} />
+        <Gauge label="depression" value={apollo.depression} />
+      </div>
+    </div>
+  );
+}
+
+function ConcordanceAlert({ flag }) {
+  if (!flag) return null;
+  const tone =
+    flag.tier === 1 ? { border:"var(--flag)", bg:"var(--flag-soft)" } :
+    flag.tier === 2 ? { border:"var(--signal)", bg:"var(--signal-soft)" } :
+    { border:"var(--ink-500)", bg:"var(--ink-700)" };
+  return (
+    <div style={{ margin:16, border:`1px solid ${tone.border}`, background:tone.bg, borderRadius:8, padding:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+        <div className="label-mono">concordance flag · tier {flag.tier}</div>
+        <div className="label-mono">{flag.agent || "M.E.R.C.E.D."}</div>
+      </div>
+      <div className="text-balance" style={{ color:"var(--bone-50)", lineHeight:1.55, marginBottom:8 }}>
+        {flag.gloss}
+      </div>
+      <div className="mono" style={{ fontSize:11, color:"var(--bone-400)" }}>
+        trigger: "{flag.trigger_phrase}" · {flag.biomarker_signal}
+      </div>
+    </div>
+  );
+}
+
+function SOAPNote({ note }) {
+  const sections = [
+    ["S","subjective", note?.subjective],
+    ["O","objective",  note?.objective],
+    ["A","assessment", note?.assessment],
+    ["P","plan",       note?.plan],
+  ];
+  return (
+    <div className="panel">
+      <div className="panel-header">soap note · S.C.R.I.B.E.</div>
+      <div style={{ padding:16, display:"grid", gap:14, fontSize:13 }}>
+        {sections.map(([k,name,body]) => (
+          <div key={k} style={{ display:"grid", gridTemplateColumns:"28px 1fr", gap:12 }}>
+            <div className="mono" style={{ color:"var(--signal)", fontSize:18 }}>{k}</div>
+            <div>
+              <div className="label-mono" style={{ marginBottom:4 }}>{name}</div>
+              <div style={{ color:"var(--bone-100)", lineHeight:1.55 }}>
+                {body || <span style={{ color:"var(--bone-400)", fontStyle:"italic" }}>—</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// V.I.C.T.O.R. is the hub at the center. The four others sit on a ring
+// around it. Coordinates are within a 280×260 viewBox.
+const AGENT_NODES = {
+  "V.I.C.T.O.R.": { x:140, y:130, role:"triage leader",  short:"VIC" },
+  "M.E.R.C.E.D.": { x: 40, y: 50, role:"concordance",    short:"MER" },
+  "S.C.R.I.B.E.": { x:240, y: 50, role:"soap note",      short:"SCR" },
+  "J.A.C.K.I.E.": { x: 40, y:210, role:"patient voice",  short:"JAC" },
+  "E.L.M.E.R.":   { x:240, y:210, role:"evidence",       short:"ELM" },
+};
+const AGENT_ORDER = ["V.I.C.T.O.R.","M.E.R.C.E.D.","S.C.R.I.B.E.","J.A.C.K.I.E.","E.L.M.E.R."];
+const EDGES = [
+  ["V.I.C.T.O.R.","M.E.R.C.E.D."],
+  ["V.I.C.T.O.R.","S.C.R.I.B.E."],
+  ["V.I.C.T.O.R.","J.A.C.K.I.E."],
+  ["V.I.C.T.O.R.","E.L.M.E.R."],
+];
+
+function SwarmProcessor({ activity, logs }) {
+  return (
+    <div className="panel" style={{ display:"flex", flexDirection:"column", minHeight:0 }}>
+      <div className="panel-header">swarm processor</div>
+
+      {/* Graph */}
+      <div style={{ padding:"16px 12px 8px" }}>
+        <svg viewBox="0 0 280 260" style={{ width:"100%", display:"block" }}>
+          <defs>
+            <radialGradient id="hubGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(14,124,134,0.18)" />
+              <stop offset="100%" stopColor="rgba(14,124,134,0)" />
+            </radialGradient>
+            <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="1.6" />
+            </filter>
+          </defs>
+
+          {/* Edges */}
+          {EDGES.map(([a, b]) => {
+            const A = AGENT_NODES[a], B = AGENT_NODES[b];
+            const liveA = activity[a]?.status === "active";
+            const liveB = activity[b]?.status === "active";
+            const live = liveA && liveB;
+            return (
+              <g key={a + b}>
+                <line x1={A.x} y1={A.y} x2={B.x} y2={B.y}
+                  stroke={live ? "var(--signal)" : "var(--ink-500)"}
+                  strokeWidth={live ? 1.4 : 0.8}
+                  strokeOpacity={live ? 0.9 : 0.5}
+                  style={{ transition:"all .3s" }} />
+                {live && (
+                  <circle r="2.4" fill="var(--signal)">
+                    <animateMotion dur="1.4s" repeatCount="indefinite"
+                      path={`M ${A.x} ${A.y} L ${B.x} ${B.y}`} />
+                  </circle>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Hub glow */}
+          <circle cx={AGENT_NODES["V.I.C.T.O.R."].x} cy={AGENT_NODES["V.I.C.T.O.R."].y}
+                  r="42" fill="url(#hubGlow)" />
+
+          {/* Nodes */}
+          {AGENT_ORDER.map((id) => {
+            const n = AGENT_NODES[id];
+            const live = activity[id]?.status === "active";
+            const isHub = id === "V.I.C.T.O.R.";
+            const r = isHub ? 22 : 18;
+            return (
+              <g key={id}>
+                {live && (
+                  <circle cx={n.x} cy={n.y} r={r + 6}
+                    fill="none" stroke="var(--signal)" strokeWidth="1"
+                    opacity="0.5" filter="url(#soft)">
+                    <animate attributeName="r" from={r + 2} to={r + 12}
+                             dur="1.6s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" from="0.6" to="0"
+                             dur="1.6s" repeatCount="indefinite" />
+                  </circle>
+                )}
+                <circle cx={n.x} cy={n.y} r={r}
+                  fill={live ? "var(--signal-soft)" : "var(--ink-800)"}
+                  stroke={live ? "var(--signal)" : (isHub ? "var(--bone-400)" : "var(--ink-500)")}
+                  strokeWidth={isHub ? 1.4 : 1}
+                  style={{ transition:"all .3s" }} />
+                <text x={n.x} y={n.y + 1} textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontSize={isHub ? 10 : 9}
+                  fontWeight={isHub ? 600 : 500}
+                  fill={live ? "var(--signal)" : "var(--bone-100)"}>
+                  {n.short}
+                </text>
+                <text x={n.x} y={n.y + r + 12} textAnchor="middle"
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontSize="8" letterSpacing="0.12em"
+                  fill="var(--bone-400)">
+                  {n.role.toUpperCase()}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Active agent strip */}
+      <div style={{ padding:"4px 16px 12px", display:"grid", gap:6 }}>
+        {AGENT_ORDER.map((id) => {
+          const act = activity[id];
+          if (!act?.action) return null;
+          return (
+            <div key={id} style={{ display:"grid", gridTemplateColumns:"86px 1fr", gap:10, alignItems:"baseline" }}>
+              <div className="mono" style={{
+                fontSize:10, color: act.status==="active" ? "var(--signal)" : "var(--bone-400)",
+                letterSpacing:"0.08em",
+              }}>{id}</div>
+              <div style={{ fontSize:12, color:"var(--bone-100)", lineHeight:1.45 }}>
+                {act.action}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Logs */}
+      <div style={{ marginTop:"auto", borderTop:"1px solid var(--ink-600)", padding:"12px 16px", maxHeight:140, overflow:"auto" }}>
+        <div className="label-mono" style={{ marginBottom:8 }}>processing logs</div>
+        <div className="mono" style={{ fontSize:10.5, color:"var(--bone-400)", lineHeight:1.7 }}>
+          {logs.length === 0
+            ? "awaiting first event…"
+            : logs.slice(-12).map((l, i) => (
+                <div key={i}>
+                  <span style={{ color:"var(--bone-200)" }}>{l.t}</span>
+                  {"  "}
+                  <span style={{ color:"var(--signal)" }}>{l.agent}</span>
+                  {"  "}
+                  {l.msg}
+                </div>
+              ))
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const QUEUE = [
+  { id:"demo",  name:"Patient · demo",   cc:"stomach pain",   status:"Escalated"   },
+  { id:"r-002", name:"—",                cc:"chest pain",     status:"Urgent"      },
+  { id:"r-003", name:"—",                cc:"fall",           status:"Standard"    },
+  { id:"r-004", name:"—",                cc:"headache",       status:"Standard"    },
+  { id:"r-005", name:"—",                cc:"ankle sprain",   status:"Observation" },
+];
+const TONE = {
+  Escalated:"var(--flag)", Urgent:"var(--signal)",
+  Standard:"var(--bone-200)", Observation:"var(--bone-400)", Discharged:"var(--bone-400)",
+};
+
+function PatientQueue({ activeRoom, onSelect }) {
+  return (
+    <div className="panel" style={{ display:"flex", flexDirection:"column", minHeight:0 }}>
+      <div className="panel-header">patient queue</div>
+      <div style={{ overflow:"auto" }}>
+        {QUEUE.map(p => {
+          const active = p.id === activeRoom;
+          return (
+            <button key={p.id} onClick={() => onSelect(p.id)}
+              style={{
+                width:"100%", textAlign:"left", padding:"12px 16px",
+                borderBottom:"1px solid var(--ink-700)",
+                background: active ? "var(--ink-700)" : "transparent",
+                color:"var(--bone-100)", border:"none",
+              }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+                <div style={{ fontSize:13 }}>{p.name}</div>
+                <div className="label-mono" style={{ color: TONE[p.status] }}>{p.status}</div>
+              </div>
+              <div style={{ fontSize:11, color:"var(--bone-400)" }}>{p.cc}</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ESIComparison({ esi }) {
+  const std = esi?.standard_esi ?? "—";
+  const adj = esi?.victor_esi ?? "—";
+  return (
+    <div className="panel">
+      <div className="panel-header">ESI score</div>
+      <div style={{ padding:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          <div>
+            <div className="label-mono" style={{ marginBottom:4 }}>standard</div>
+            <div className="mono" style={{ fontSize:30, color:"var(--bone-200)" }}>{std}</div>
+          </div>
+          <div>
+            <div className="label-mono" style={{ marginBottom:4 }}>V.I.C.T.O.R.</div>
+            <div className="mono" style={{ fontSize:30, color:"var(--signal)" }}>{adj}</div>
+          </div>
+        </div>
+        <div style={{ fontSize:11, color:"var(--bone-400)", marginTop:12, lineHeight:1.5 }}>
+          {esi?.adjustment_reason || "Awaiting evidence — score updates as concordance signals arrive."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------------------
+ * Pages
+ * --------------------------------------------------------------------------*/
+
+function PatientView() {
+  const [step, setStep] = useState("welcome");
+  const [voice, setVoice] = useState(null);
+  const [recording, setRecording] = useState(false);
+  const [framesSent, setFramesSent] = useState(0);
+  const [room] = useState(() => "room-" + Math.random().toString(36).slice(2, 8));
+
+  // Simulated frame counter while "recording"
+  useEffect(() => {
+    if (!recording) return;
+    const id = setInterval(() => setFramesSent(n => n + 1), 40); // 25 frames/sec
+    return () => clearInterval(id);
+  }, [recording]);
+
+  return (
+    <div style={{ minHeight:"100%", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24 }}>
+      {step === "welcome" && (
+        <div style={{ maxWidth:480, width:"100%", textAlign:"center" }}>
+          <div className="label-mono" style={{ marginBottom:16 }}>welcome</div>
+          <h1 style={{ fontSize:30, color:"var(--bone-50)", marginBottom:12, fontWeight:500 }}>
+            We'll get you seen.
+          </h1>
+          <p style={{ color:"var(--bone-200)", marginBottom:40, lineHeight:1.65 }}>
+            Answer a few quick questions out loud. It helps the care team understand
+            what's going on before you're seen, so the right clinician reaches you
+            sooner. Your responses are kept private and used only for your visit.
+          </p>
+          <button onClick={() => setStep("select")}
+            style={{ padding:"12px 28px", background:"var(--bone-50)", color:"var(--ink-900)",
+              borderRadius:6, fontWeight:500, border:"none", fontSize:15 }}>
+            Begin
+          </button>
+        </div>
+      )}
+
+      {step === "select" && <VoiceSelector onSelect={(v) => { setVoice(v); setStep("interview"); }} />}
+
+      {step === "interview" && (
+        <div style={{ maxWidth:480, width:"100%", textAlign:"center" }}>
+          <div className="label-mono" style={{ marginBottom:8 }}>
+            speaking with {voice} · simulated
+          </div>
+          <h2 style={{ fontSize:24, color:"var(--bone-50)", marginBottom:8 }}>
+            Tell me what's been going on.
+          </h2>
+          <p style={{ fontSize:13, color:"var(--bone-400)", marginBottom:48 }}>
+            Take your time. I'll ask a few follow-up questions.
+          </p>
+          <MicButton recording={recording}
+            onStart={() => setRecording(true)}
+            onStop={() => { setRecording(false); setTimeout(() => setStep("done"), 200); }} />
+          <div className="label-mono" style={{ marginTop:48 }}>
+            frames sent · {framesSent}
+          </div>
+        </div>
+      )}
+
+      {step === "done" && (
+        <div style={{ maxWidth:480, width:"100%", textAlign:"center" }}>
+          <div className="label-mono" style={{ marginBottom:16 }}>thank you</div>
+          <h2 style={{ fontSize:24, color:"var(--bone-50)", marginBottom:12 }}>
+            A clinician will see you shortly.
+          </h2>
+          <p style={{ fontSize:13, color:"var(--bone-400)", marginBottom:8 }}>Session ID</p>
+          <p className="mono" style={{ color:"var(--bone-100)" }}>{room}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EpicTitleBar() {
+  return (
+    <>
+      <div className="epic-titlebar">
+        <span style={{ fontWeight:600, letterSpacing:0.2 }}>VICTOR</span>
+        <span className="lozenge">Triage Workspace</span>
+        <span style={{ opacity:0.85 }}>—  Mercy Hospital Springfield  ·  ED Track 2</span>
+        <span style={{ marginLeft:"auto", opacity:0.85 }}>Dr. Reyes, A.  ·  4:01 PM  ·  05/04/2026</span>
+        <span className="lozenge">Print</span>
+        <span className="lozenge">Secure</span>
+        <span className="lozenge">Log Out</span>
+      </div>
+      <div className="epic-menubar">
+        <span>File</span><span>Edit</span><span>View</span><span>Patient</span>
+        <span>Tools</span><span>Reports</span><span>Help</span>
+        <span style={{ marginLeft:"auto", color:"#4a5b75" }}>Wksp · Triage · v1.4.2</span>
+      </div>
+    </>
+  );
+}
+
+function EpicPatientBanner({ patient, esi }) {
+  const adj = esi?.victor_esi;
+  const std = esi?.standard_esi;
+  return (
+    <div className="epic-banner">
+      <div style={{ display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap" }}>
+        <div className="epic-banner-name">{patient.name}</div>
+        <div style={{ fontSize:11, color:"#4a5b75" }}>
+          {patient.sex}, {patient.age} y.o.  ·  DOB {patient.dob}
+        </div>
+        <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
+          <span className="alert">Allergy: NKDA</span>
+          {adj && adj < std && (
+            <span style={{
+              background:"var(--epic-flag-bg)", border:"1px solid var(--epic-flag-bd)",
+              padding:"1px 6px", borderRadius:2, fontWeight:600, color:"#5a0e0a", fontSize:11,
+            }}>
+              VICTOR Re-Triage: ESI {std} → {adj}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="epic-banner-row">
+        <div><span className="lbl">MRN</span>{patient.mrn}</div>
+        <div><span className="lbl">CSN</span>{patient.csn}</div>
+        <div><span className="lbl">Room/Bed</span>{patient.room}</div>
+        <div><span className="lbl">Arrived</span>{patient.arrived}</div>
+        <div><span className="lbl">Chief Complaint</span>{patient.cc}</div>
+        <div><span className="lbl">Code</span>Full</div>
+        <div><span className="lbl">PCP</span>Patel, R. MD</div>
+        <div><span className="lbl">Insurance</span>BCBS PPO</div>
+        <div><span className="lbl">Hgt/Wgt</span>{patient.hw}</div>
+        <div><span className="lbl">Pregnancy</span>Negative</div>
+        <div><span className="lbl">Isolation</span>None</div>
+        <div><span className="lbl">FYI</span>None on file</div>
+      </div>
+    </div>
+  );
+}
+
+function EpicTabs() {
+  const tabs = ["ED Manager","ED Track Bd","Triage","Notes","Flowsheets","MAR","Results","Orders"];
+  return (
+    <div className="epic-tabs">
+      {tabs.map((t) => (
+        <div key={t} className={"tab" + (t==="Triage"?" active":"")}>{t}</div>
+      ))}
+    </div>
+  );
+}
+
+function EpicToolbar({ onRunDemo, running }) {
+  const Tool = ({ label, icon, active, onClick }) => (
+    <div className={"epic-tool" + (active?" active":"")} onClick={onClick}>
+      <div className="ico">{icon}</div>
+      <div>{label}</div>
+    </div>
+  );
+  const G = (path) => (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#1a5fb4" strokeWidth="1.4">
+      <path d={path} />
+    </svg>
+  );
+  return (
+    <div className="epic-toolbar">
+      <Tool label="Save"     icon={G("M3 3h8l2 2v8H3z M5 3v4h6V3 M5 13v-4h6v4")} />
+      <Tool label="Add Row"  icon={G("M3 4h10 M3 8h10 M3 12h10 M2 4l1-1 1 1")} />
+      <Tool label="LDA"      icon={G("M4 8a4 4 0 108 0 4 4 0 00-8 0 M8 4v8 M4 8h8")} />
+      <Tool label="Reg Doc"  icon={G("M4 2h6l2 2v10H4z M6 6h4 M6 9h4 M6 12h2")} active />
+      <Tool label="Graph"    icon={G("M2 13h12 M4 11l3-4 2 2 4-6")} />
+      <div className="epic-tool-sep" />
+      <Tool label="VICTOR"   icon={
+        <svg width="14" height="14" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="2.4" fill="#0e7c86" />
+          <circle cx="3" cy="3" r="1.4" fill="none" stroke="#0e7c86" />
+          <circle cx="13" cy="3" r="1.4" fill="none" stroke="#0e7c86" />
+          <circle cx="3" cy="13" r="1.4" fill="none" stroke="#0e7c86" />
+          <circle cx="13" cy="13" r="1.4" fill="none" stroke="#0e7c86" />
+          <line x1="8" y1="8" x2="3" y2="3" stroke="#0e7c86" strokeWidth="0.6" />
+          <line x1="8" y1="8" x2="13" y2="3" stroke="#0e7c86" strokeWidth="0.6" />
+          <line x1="8" y1="8" x2="3" y2="13" stroke="#0e7c86" strokeWidth="0.6" />
+          <line x1="8" y1="8" x2="13" y2="13" stroke="#0e7c86" strokeWidth="0.6" />
+        </svg>
+      } />
+      <Tool label="Concord." icon={G("M3 8l3 3 7-7")} />
+      <Tool label="Biomark." icon={G("M2 12c2-4 3-4 4 0s2 4 4 0 3-4 4 0")} />
+      <Tool label="Listen"   icon={G("M5 6v4 M8 4v8 M11 6v4")} />
+      <div className="epic-tool-sep" />
+      <Tool label="Refresh"  icon={G("M13 4v3h-3 M3 12V9h3 M13 7a5 5 0 00-9-2 M3 9a5 5 0 009 2")} />
+      <Tool label="Legend"   icon={G("M3 4h10 M3 8h10 M3 12h6")} />
+      <Tool label="Cosign"   icon={G("M3 12c2-2 4-2 5 0 1-3 3-3 5 0")} />
+      <div className="epic-tool-sep" />
+      <Tool
+        label={running ? "Running" : "Run demo"}
+        icon={
+          <svg width="14" height="14" viewBox="0 0 16 16">
+            <path d="M5 4l7 4-7 4z" fill={running ? "#94a3b8" : "#0e7c86"} />
+          </svg>
+        }
+        active={!running}
+        onClick={running ? undefined : onRunDemo}
+      />
+    </div>
+  );
+}
+
+const EPIC_RAIL = [
+  ["Summary","S"],["Flowsheets","F"],["Manage Orders","O"],["Care Plan","C"],
+  ["Education","E"],["Notes","N"],["Results Review","R"],["Chart Review","C"],
+  ["History","H"],["Demographics","D"],["SnapShot","S"],["Review Flows","R"],
+  ["Order Review","O"],["Pathway Rev.","P"],["VICTOR Triage","V"],
+];
+
+function EpicRail() {
+  return (
+    <div className="epic-rail">
+      {EPIC_RAIL.map(([label, glyph]) => {
+        const active = label === "VICTOR Triage";
+        return (
+          <div key={label} className={"item" + (active ? " active" : "")}>
+            <div className="ico">{glyph}</div>
+            <div>{label}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EpicConcordanceSection({ flag }) {
+  return (
+    <div className="epic-section">
+      <div className="epic-band">
+        <span>VICTOR Concordance Flag</span>
+        <span className="meta">{flag ? `Tier ${flag.tier} · ${flag.agent || "M.E.R.C.E.D."}` : "Awaiting evaluation"}</span>
+      </div>
+      {!flag ? (
+        <div style={{ padding:"8px 10px", color:"#4a5b75", fontStyle:"italic" }}>
+          No concordance discrepancy detected. Standard ESI in effect.
+        </div>
+      ) : (
+        <>
+          <div className="epic-flag-bar">
+            <div style={{ fontWeight:600, marginBottom:2 }}>
+              Atypical presentation — re-triage recommended
+            </div>
+            <div>{flag.gloss}</div>
+          </div>
+          <div className="epic-row">
+            <div className="k">Trigger phrase</div>
+            <div className="v" style={{ fontStyle:"italic" }}>"{flag.trigger_phrase}"</div>
+          </div>
+          <div className="epic-row">
+            <div className="k">Biomarker signal</div>
+            <div className="v">{flag.biomarker_signal}</div>
+          </div>
+          <div className="epic-row">
+            <div className="k">Evidence basis</div>
+            <div className="v">
+              MIMIC-IV female CVD cohort · n=2,418 ·
+              <a href="#" style={{ color:"var(--epic-link)", marginLeft:6 }}>view cohort</a>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function EpicESISection({ esi }) {
+  const std = esi?.standard_esi ?? "—";
+  const adj = esi?.victor_esi ?? "—";
+  const changed = esi && adj !== std;
+  return (
+    <div className="epic-section">
+      <div className="epic-band">
+        <span>ESI Acuity</span>
+        <span className="meta">Standard vs VICTOR-adjusted</span>
+      </div>
+      <div className="epic-row">
+        <div className="k">Standard ESI</div>
+        <div className="v">
+          <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:14, fontWeight:600 }}>{std}</span>
+          <span style={{ color:"#4a5b75", marginLeft:8 }}>(RN triage assessment)</span>
+        </div>
+      </div>
+      <div className="epic-row" style={{ background: changed ? "#fff7d6" : undefined }}>
+        <div className="k" style={{ background: changed ? "#fff7d6" : undefined }}>VICTOR-adjusted ESI</div>
+        <div className="v">
+          <span style={{
+            fontFamily:"'JetBrains Mono',monospace", fontSize:14, fontWeight:700,
+            color: changed ? "#b3261e" : "#1a2332"
+          }}>{adj}</span>
+          {changed && <span style={{ marginLeft:8, color:"#b3261e", fontWeight:600 }}>↑ Escalate</span>}
+        </div>
+      </div>
+      <div className="epic-row">
+        <div className="k">Reason</div>
+        <div className="v" style={{ color: esi ? "#1a2332" : "#4a5b75", fontStyle: esi ? "normal" : "italic" }}>
+          {esi?.adjustment_reason || "Awaiting evidence — score updates as concordance signals arrive."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EpicBar({ label, value, group }) {
+  const pct = Math.round((value || 0) * 100);
+  const high = pct >= 60;
+  return (
+    <div className="epic-row">
+      <div className="k">
+        <span style={{ color:"#4a5b75", fontSize:10.5, marginRight:6, textTransform:"uppercase", letterSpacing:".06em" }}>
+          {group}
+        </span>
+        {label}
+      </div>
+      <div className="v" style={{ display:"flex", alignItems:"center", gap:8 }}>
+        <div style={{
+          flex:1, height:10, background:"#eef2f7",
+          border:"1px solid #cdd9e6", borderRadius:2, overflow:"hidden", maxWidth:180,
+        }}>
+          <div style={{
+            height:"100%", width: pct + "%",
+            background: high ? "linear-gradient(to bottom, #ec8a82, #b3261e)"
+                             : "linear-gradient(to bottom, #6dbcc4, #0e7c86)",
+            transition:"width .4s",
+          }} />
+        </div>
+        <span style={{ fontFamily:"'JetBrains Mono',monospace", fontSize:11, minWidth:36 }}>
+          {value == null ? "—" : value.toFixed(2)}
+        </span>
+        {high && <span style={{ color:"#b3261e", fontWeight:600, fontSize:11 }}>HIGH</span>}
+      </div>
+    </div>
+  );
+}
+
+function EpicBiomarkersSection({ data }) {
+  const helios = data?.helios || {};
+  const apollo = data?.apollo || {};
+  return (
+    <div className="epic-section">
+      <div className="epic-band">
+        <span>Voice Biomarkers · Thymia</span>
+        <span className="meta">Captured 4:00 PM · 28-second sample</span>
+      </div>
+      {!data ? (
+        <div style={{ padding:"8px 10px", color:"#4a5b75", fontStyle:"italic" }}>
+          Awaiting voice sample…
+        </div>
+      ) : (
+        <>
+          <EpicBar group="Helios" label="Stress"     value={helios.stress} />
+          <EpicBar group="Helios" label="Distress"   value={helios.distress} />
+          <EpicBar group="Helios" label="Burnout"    value={helios.burnout} />
+          <EpicBar group="Helios" label="Tiredness"  value={helios.tiredness} />
+          <EpicBar group="Apollo" label="Anxiety"    value={apollo.anxiety} />
+          <EpicBar group="Apollo" label="Depression" value={apollo.depression} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function EpicTranscriptSection({ lines }) {
+  return (
+    <div className="epic-section">
+      <div className="epic-band">
+        <span>Patient Interview · Live Transcript</span>
+        <span className="meta">J.A.C.K.I.E. · Deepgram</span>
+      </div>
+      <div style={{
+        padding:"6px 10px", maxHeight:140, overflow:"auto",
+        fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.65,
+      }}>
+        {lines.length === 0
+          ? <div style={{ color:"#4a5b75", fontStyle:"italic", fontFamily:"'Segoe UI',sans-serif" }}>Awaiting audio…</div>
+          : lines.map((l,i)=>(
+              <div key={i}>
+                <span style={{
+                  background:"#e7eef6", color:"#4a5b75",
+                  padding:"0 4px", marginRight:6, borderRadius:2, fontSize:10,
+                }}>{l.language || "—"}</span>
+                {l.text}
+              </div>
+            ))}
+      </div>
+    </div>
+  );
+}
+
+function EpicSOAPSection({ note }) {
+  const sections = [
+    ["S","Subjective", note?.subjective],
+    ["O","Objective",  note?.objective],
+    ["A","Assessment", note?.assessment],
+    ["P","Plan",       note?.plan],
+  ];
+  return (
+    <div className="epic-section">
+      <div className="epic-band">
+        <span>SOAP Note · S.C.R.I.B.E.</span>
+        <span className="meta">Draft — pending clinician cosign</span>
+      </div>
+      {sections.map(([k,name,body]) => (
+        <div key={k} className="epic-row">
+          <div className="k">
+            <span style={{
+              display:"inline-block", width:16, textAlign:"center", marginRight:6,
+              background:"#e3f2f3", color:"#0e7c86", fontWeight:700, borderRadius:2,
+              fontFamily:"'JetBrains Mono',monospace",
+            }}>{k}</span>
+            {name}
+          </div>
+          <div className="v" style={{ color: body ? "#1a2332" : "#4a5b75", fontStyle: body ? "normal" : "italic" }}>
+            {body || "—"}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EpicSwarmSection({ activity, logs }) {
+  const activeCount = Object.values(activity).filter(a => a?.status === "active").length;
+  return (
+    <div className="epic-section">
+      <div className="epic-band">
+        <span>VICTOR Agent Swarm</span>
+        <span className="meta">{activeCount} active</span>
+      </div>
+      <div style={{ padding:"8px 6px 0", background:"#f8fbff" }}>
+        <svg viewBox="0 0 280 240" style={{ width:"100%", display:"block" }}>
+          <defs>
+            <radialGradient id="emrHubGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(14,124,134,0.18)" />
+              <stop offset="100%" stopColor="rgba(14,124,134,0)" />
+            </radialGradient>
+            <filter id="emrSoft" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="1.6" />
+            </filter>
+          </defs>
+          {EDGES.map(([a, b]) => {
+            const A = AGENT_NODES[a], B = AGENT_NODES[b];
+            const live = activity[a]?.status === "active" && activity[b]?.status === "active";
+            return (
+              <g key={a + b}>
+                <line x1={A.x} y1={A.y} x2={B.x} y2={B.y}
+                  stroke={live ? "#0e7c86" : "#b8c4d4"}
+                  strokeWidth={live ? 1.4 : 0.8}
+                  strokeOpacity={live ? 0.9 : 0.7}
+                  style={{ transition:"all .3s" }} />
+                {live && (
+                  <circle r="2.4" fill="#0e7c86">
+                    <animateMotion dur="1.4s" repeatCount="indefinite"
+                      path={`M ${A.x} ${A.y} L ${B.x} ${B.y}`} />
+                  </circle>
+                )}
+              </g>
+            );
+          })}
+          <circle cx={AGENT_NODES["V.I.C.T.O.R."].x} cy={AGENT_NODES["V.I.C.T.O.R."].y}
+                  r="42" fill="url(#emrHubGlow)" />
+          {AGENT_ORDER.map((id) => {
+            const n = AGENT_NODES[id];
+            const live = activity[id]?.status === "active";
+            const isHub = id === "V.I.C.T.O.R.";
+            const r = isHub ? 22 : 18;
+            return (
+              <g key={id}>
+                {live && (
+                  <circle cx={n.x} cy={n.y} r={r + 6}
+                    fill="none" stroke="#0e7c86" strokeWidth="1"
+                    opacity="0.5" filter="url(#emrSoft)">
+                    <animate attributeName="r" from={r + 2} to={r + 12} dur="1.6s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" from="0.6" to="0" dur="1.6s" repeatCount="indefinite" />
+                  </circle>
+                )}
+                <circle cx={n.x} cy={n.y} r={r}
+                  fill={live ? "#e3f2f3" : "#ffffff"}
+                  stroke={live ? "#0e7c86" : (isHub ? "#4a5b75" : "#95acc7")}
+                  strokeWidth={isHub ? 1.4 : 1}
+                  style={{ transition:"all .3s" }} />
+                <text x={n.x} y={n.y + 1} textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontSize={isHub ? 10 : 9}
+                  fontWeight={isHub ? 700 : 500}
+                  fill={live ? "#0e7c86" : "#0f2547"}>
+                  {n.short}
+                </text>
+                <text x={n.x} y={n.y + r + 12} textAnchor="middle"
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontSize="8" letterSpacing="0.12em"
+                  fill="#4a5b75">
+                  {n.role.toUpperCase()}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div style={{ borderTop:"1px solid var(--epic-grid-soft)" }}>
+        {AGENT_ORDER.map((id) => {
+          const act = activity[id];
+          const isActive = act?.status === "active";
+          return (
+            <div key={id} className="epic-row" style={{ gridTemplateColumns:"96px 1fr 64px" }}>
+              <div className="k" style={{
+                fontFamily:"'JetBrains Mono', monospace", fontSize:10.5,
+                color: isActive ? "#0e7c86" : "#4a5b75", fontWeight: isActive ? 700 : 400,
+              }}>{id}</div>
+              <div className="v" style={{ color: act?.action ? "#1a2332" : "#94a3b8", fontStyle: act?.action ? "normal" : "italic" }}>
+                {act?.action || "idle"}
+              </div>
+              <div style={{
+                padding:"3px 8px", fontSize:10.5,
+                color: isActive ? "#1f4d22" : "#4a5b75",
+                background: isActive ? "var(--epic-band)" : "transparent",
+                borderLeft:"1px solid var(--epic-grid-soft)", textAlign:"center", fontWeight:600,
+              }}>
+                {isActive ? "ACTIVE" : "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ borderTop:"1px solid var(--epic-grid-soft)", background:"#fafbfd" }}>
+        <div style={{
+          padding:"3px 10px", fontSize:10.5, color:"#4a5b75",
+          textTransform:"uppercase", letterSpacing:".08em", borderBottom:"1px solid var(--epic-grid-soft)",
+        }}>Processing log</div>
+        <div style={{
+          padding:"4px 10px", maxHeight:120, overflow:"auto",
+          fontFamily:"'JetBrains Mono', monospace", fontSize:10.5, lineHeight:1.7, color:"#4a5b75",
+        }}>
+          {logs.length === 0
+            ? <span style={{ fontStyle:"italic", fontFamily:"'Segoe UI',sans-serif" }}>Awaiting first event…</span>
+            : logs.slice(-12).map((l, i) => (
+                <div key={i}>
+                  <span style={{ color:"#1a2332" }}>{l.t}</span>{"  "}
+                  <span style={{ color:"#0e7c86", fontWeight:700 }}>{l.agent}</span>{"  "}
+                  {l.msg}
+                </div>
+              ))
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EpicQueueSection({ activeRoom, onSelect }) {
+  return (
+    <div className="epic-section">
+      <div className="epic-band">
+        <span>ED Track Board</span>
+        <span className="meta">5 active · 1 escalated</span>
+      </div>
+      <div className="epic-row" style={{ gridTemplateColumns:"40px 1fr 80px 70px", background:"#e7eef6", fontWeight:600 }}>
+        <div className="k" style={{ background:"#e7eef6" }}>Bed</div>
+        <div className="k" style={{ background:"#e7eef6" }}>Patient · CC</div>
+        <div className="k" style={{ background:"#e7eef6" }}>Status</div>
+        <div className="k" style={{ background:"#e7eef6", borderRight:"none" }}>ESI</div>
+      </div>
+      {QUEUE.map((p, i) => {
+        const active = p.id === activeRoom;
+        const tone = p.status === "Escalated" ? "#b3261e"
+                   : p.status === "Urgent"    ? "#0e7c86" : "#1a2332";
+        return (
+          <div key={p.id}
+            onClick={() => onSelect(p.id)}
+            className="epic-row"
+            style={{
+              gridTemplateColumns:"40px 1fr 80px 70px",
+              cursor:"pointer",
+              background: active ? "#fff7d6" : (i % 2 ? "var(--epic-row-alt)" : "var(--epic-row)"),
+            }}>
+            <div className="k" style={{ background:"transparent", fontFamily:"'JetBrains Mono',monospace" }}>
+              {12 + i}
+            </div>
+            <div className="v">
+              <span style={{ fontWeight: active ? 600 : 400 }}>{p.name}</span>
+              <span style={{ color:"#4a5b75", marginLeft:6 }}>· {p.cc}</span>
+            </div>
+            <div className="v" style={{ color: tone, fontWeight: 600 }}>{p.status}</div>
+            <div style={{ padding:"3px 8px", borderLeft:"1px solid var(--epic-grid-soft)",
+              fontFamily:"'JetBrains Mono',monospace", textAlign:"center" }}>
+              {["2","2","3","3","4"][i] || "—"}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ClinicianDashboard() {
+  const [activeRoom, setActiveRoom] = useState("demo");
+  const [transcriptLines, setTranscript] = useState([]);
+  const [biomarkers, setBiomarkers] = useState(null);
+  const [flags, setFlags] = useState([]);
+  const [soap, setSoap] = useState(null);
+  const [esi, setEsi] = useState(null);
+  const [agentActivity, setActivity] = useState({});
+  const [logs, setLogs] = useState([]);
+  const [running, setRunning] = useState(false);
+
+  const reset = () => {
+    setTranscript([]); setBiomarkers(null); setFlags([]); setSoap(null); setEsi(null); setActivity({}); setLogs([]);
+  };
+
+  const runDemo = () => {
+    reset(); setRunning(true);
+    const t0 = Date.now();
+    DEMO_EVENTS.forEach(({ delay, type, data }) => {
+      setTimeout(() => {
+        const ts = ((Date.now() - t0) / 1000).toFixed(2) + "s";
+        if (type === "transcript") {
+          setTranscript(prev => [...prev, data]);
+          setLogs(prev => [...prev, { t: ts, agent: "DEEPGRAM", msg: `"${data.text}"` }]);
+        } else if (type === "biomarker") {
+          setBiomarkers(data);
+          setLogs(prev => [...prev, { t: ts, agent: "THYMIA", msg: `helios stress ${data.helios.stress.toFixed(2)} · apollo anxiety ${data.apollo.anxiety.toFixed(2)}` }]);
+        } else if (type === "concordance_flag") {
+          setFlags(prev => [data, ...prev]);
+          setLogs(prev => [...prev, { t: ts, agent: "M.E.R.C.E.D.", msg: `tier ${data.tier} flag · trigger: ${data.trigger_phrase}` }]);
+        } else if (type === "soap_update") {
+          setSoap(data);
+          setLogs(prev => [...prev, { t: ts, agent: "S.C.R.I.B.E.", msg: "SOAP note updated" }]);
+        } else if (type === "esi_update") {
+          setEsi(data);
+          setLogs(prev => [...prev, { t: ts, agent: "V.I.C.T.O.R.", msg: `ESI ${data.standard_esi} → ${data.victor_esi}` }]);
+        } else if (type === "agent_activity") {
+          setActivity(prev => ({ ...prev, [data.agent]: data }));
+          setLogs(prev => [...prev, { t: ts, agent: data.agent, msg: data.action }]);
+        }
+      }, delay);
+    });
+    setTimeout(() => setRunning(false), 3200);
+  };
+
+  const patient = {
+    name:"Hernandez, Maria L.", sex:"Female", age:54, dob:"03/14/1971",
+    mrn:"E1404907", csn:"15309", room:"ED 12 / B",
+    arrived:"3:42 PM (19 min ago)", cc:"Stomach pain, nausea",
+    hw:"5'4\" / 168 lb",
+  };
+
+  return (
+    <div className="epic-root" style={{ height:"100vh", display:"flex", flexDirection:"column" }}>
+      <EpicTitleBar />
+      <EpicPatientBanner patient={patient} esi={esi} />
+      <EpicTabs />
+      <EpicToolbar onRunDemo={runDemo} running={running} />
+
+      <div style={{ flex:1, display:"flex", minHeight:0, background:"#cdd9e6" }}>
+        <EpicRail />
+
+        <div style={{ flex:1, padding:6, overflow:"auto", minWidth:0 }}>
+          <EpicConcordanceSection flag={flags[0]} />
+          <EpicESISection esi={esi} />
+          <EpicBiomarkersSection data={biomarkers} />
+          <EpicTranscriptSection lines={transcriptLines} />
+          <EpicSOAPSection note={soap} />
+
+          <div style={{
+            display:"flex", gap:6, justifyContent:"flex-end",
+            padding:"8px 4px 4px",
+          }}>
+            <button className="epic-btn">Edit</button>
+            <button className="epic-btn">Downgrade</button>
+            <button className="epic-btn">Defer to RN</button>
+            <button className="epic-btn primary">Approve &amp; Push to Chart</button>
+          </div>
+        </div>
+
+        <div style={{
+          width:380, padding:6, borderLeft:"1px solid #95acc7",
+          background:"#dde6f0", overflow:"auto",
+        }}>
+          <EpicSwarmSection activity={agentActivity} logs={logs} />
+          <EpicQueueSection activeRoom={activeRoom} onSelect={setActiveRoom} />
+        </div>
+      </div>
+
+      <div className="epic-statusbar">
+        <span style={{ fontWeight:600 }}>Dr. Reyes, A.</span>
+        <span>·</span>
+        <span>ED Track 2</span>
+        <span>·</span>
+        <span style={{ color:"#1f4d22" }}>● VICTOR connected</span>
+        <span style={{ marginLeft:"auto" }}>v1.4.2 · build 2026.05.04</span>
+      </div>
+    </div>
+  );
+}
+
+function btn(kind) {
+  if (kind === "primary") return {
+    padding:"6px 12px", fontSize:13, fontWeight:500,
+    background:"var(--bone-50)", color:"var(--ink-900)",
+    border:"none", borderRadius:4,
+  };
+  return {
+    padding:"6px 12px", fontSize:13, color:"var(--bone-200)",
+    border:"1px solid var(--ink-500)", borderRadius:4, background:"transparent",
+  };
+}
+
+/* --------------------------------------------------------------------------
+ * Preview shell — "router"
+ * --------------------------------------------------------------------------*/
+
+function App() {
+  const [route, setRoute] = useState("clinician"); // patient | clinician
+  return (
+    <div data-screen-label={route === "patient" ? "01 Patient kiosk" : "02 Clinician dashboard"}
+         style={{ height:"100%" }}>
+      <div className="preview-tabs">
+        <button onClick={() => setRoute("patient")}   className={route==="patient"?"active":""}>/ patient</button>
+        <button onClick={() => setRoute("clinician")} className={route==="clinician"?"active":""}>/ clinician</button>
+      </div>
+      {route === "patient" ? <PatientView /> : <ClinicianDashboard />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,464 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    background: #0c1324;
+    color: #dce1fb;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11";
+    margin: 0;
+  }
+}
+
+/* V.I.C.T.O.R. dark cyan brand */
+:root {
+  --vic-bg:           #0c1324;
+  --vic-bg-low:       #151b2d;
+  --vic-bg-mid:       #191f31;
+  --vic-bg-high:      #23293c;
+  --vic-bg-highest:   #2e3447;
+  --vic-bg-bright:    #33394c;
+  --vic-surface:      #2e3447;
+  --vic-primary:      #2fd9f4;
+  --vic-on-primary:   #00363e;
+  --vic-secondary:    #c0c1ff;
+  --vic-tertiary:     #ffb95f;
+  --vic-error:        #ffb4ab;
+  --vic-error-bg:     #93000a;
+  --vic-on-error-bg:  #ffdad6;
+  --vic-on-surface:   #dce1fb;
+  --vic-on-surface-variant: #c6c6cd;
+  --vic-outline:      #909097;
+  --vic-outline-variant: #45464d;
+}
+
+.font-headline { font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; }
+.font-body { font-family: 'Inter', system-ui, sans-serif; }
+
+.vic-glass {
+  background: rgba(46, 52, 71, 0.6);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.vic-mic-pulse {
+  box-shadow: 0 0 0 0 rgba(47, 217, 244, 0.7);
+  animation: vic-pulse 2s infinite;
+}
+@keyframes vic-pulse {
+  0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(47, 217, 244, 0.7); }
+  70%  { transform: scale(1);    box-shadow: 0 0 0 40px rgba(47, 217, 244, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(47, 217, 244, 0); }
+}
+
+.vic-typing-cursor::after {
+  content: "|";
+  animation: vic-blink 1s infinite;
+  margin-left: 2px;
+}
+@keyframes vic-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+.vic-shimmer {
+  background: linear-gradient(90deg, rgba(147,0,10,.8), rgba(255,180,171,.2), rgba(147,0,10,.8));
+  background-size: 200% 100%;
+  animation: vic-shimmer 3s linear infinite;
+}
+@keyframes vic-shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+
+.vic-network-glow { filter: drop-shadow(0 0 8px rgba(47, 217, 244, 0.4)); }
+
+.vic-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.vic-scrollbar::-webkit-scrollbar-thumb { background: rgba(47,217,244,.2); border-radius: 3px; }
+.vic-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(47,217,244,.4); }
+.vic-scrollbar::-webkit-scrollbar-track { background: transparent; }
+
+/* V.I.C.T.O.R.-themed EMR — overrides --epic-* variables under .vic-emr */
+.vic-emr {
+  --epic-titlebar:        #0c1324;
+  --epic-titlebar-2:      #151b2d;
+  --epic-banner:          #151b2d;
+  --epic-banner-2:        #191f31;
+  --epic-toolbar:         #151b2d;
+  --epic-rail:            #151b2d;
+  --epic-rail-active:     #23293c;
+  --epic-row:             #191f31;
+  --epic-row-alt:         #151b2d;
+  --epic-row-hover:       rgba(47, 217, 244, 0.08);
+  --epic-band:            #1a3a3f;
+  --epic-band-2:          #102b30;
+  --epic-band-text:       #2fd9f4;
+  --epic-grid:            #2e3447;
+  --epic-grid-soft:       rgba(69, 70, 77, 0.3);
+  --epic-link:            #2fd9f4;
+  --epic-warn-bg:         rgba(255, 185, 95, 0.15);
+  --epic-warn-bd:         #ffb95f;
+  --epic-flag-bg:         rgba(255, 180, 171, 0.12);
+  --epic-flag-bd:         #ffb4ab;
+  background: var(--vic-bg);
+  color: var(--vic-on-surface);
+}
+.vic-emr .epic-root { background: var(--vic-bg); color: var(--vic-on-surface); font-family: 'Inter', system-ui, sans-serif; }
+.vic-emr .epic-titlebar { background: var(--vic-bg); color: var(--vic-primary); border-bottom: 1px solid rgba(47, 217, 244, 0.15); }
+.vic-emr .epic-titlebar .lozenge { background: rgba(47, 217, 244, 0.15); color: var(--vic-primary); }
+.vic-emr .epic-menubar { background: var(--vic-bg-low); color: var(--vic-on-surface-variant); border-bottom: 1px solid rgba(69, 70, 77, 0.3); }
+.vic-emr .epic-menubar span:hover { background: rgba(47, 217, 244, 0.08); }
+.vic-emr .epic-banner { background: var(--vic-bg-low); border-bottom: 1px solid rgba(69, 70, 77, 0.3); }
+.vic-emr .epic-banner-name { color: var(--vic-primary); }
+.vic-emr .epic-banner-row, .vic-emr .epic-banner-row .lbl { color: var(--vic-on-surface-variant); }
+.vic-emr .epic-tabs { background: var(--vic-bg-low); border-bottom: 1px solid rgba(69, 70, 77, 0.3); }
+.vic-emr .epic-tabs .tab {
+  background: var(--vic-bg-mid); color: var(--vic-on-surface-variant);
+  border-color: rgba(69, 70, 77, 0.3);
+}
+.vic-emr .epic-tabs .tab.active {
+  background: var(--vic-bg-high); color: var(--vic-primary);
+  border-bottom-color: var(--vic-bg-high);
+}
+.vic-emr .epic-toolbar { background: var(--vic-bg-low); border-bottom: 1px solid rgba(69, 70, 77, 0.3); }
+.vic-emr .epic-tool { color: var(--vic-on-surface-variant); }
+.vic-emr .epic-tool:hover { background: rgba(47, 217, 244, 0.06); border-color: rgba(47, 217, 244, 0.3); }
+.vic-emr .epic-tool .ico {
+  background: var(--vic-bg-high); border-color: rgba(69, 70, 77, 0.4); color: var(--vic-primary);
+}
+.vic-emr .epic-tool.active .ico {
+  background: rgba(47, 217, 244, 0.15); border-color: var(--vic-primary);
+}
+.vic-emr .epic-tool-sep { background: rgba(69, 70, 77, 0.3); }
+.vic-emr .epic-rail { background: var(--vic-bg-low); border-right: 1px solid rgba(69, 70, 77, 0.3); }
+.vic-emr .epic-rail .item { color: var(--vic-on-surface-variant); border-bottom-color: rgba(69, 70, 77, 0.15); }
+.vic-emr .epic-rail .item .ico { background: var(--vic-bg-high); border-color: rgba(69, 70, 77, 0.4); color: var(--vic-primary); }
+.vic-emr .epic-rail .item:hover { background: rgba(47, 217, 244, 0.06); }
+.vic-emr .epic-rail .item.active {
+  background: var(--vic-bg-high); color: var(--vic-primary);
+  border-left-color: var(--vic-primary);
+}
+.vic-emr .epic-section { background: var(--vic-bg-mid); border-color: rgba(69, 70, 77, 0.3); }
+.vic-emr .epic-band {
+  background: linear-gradient(to bottom, rgba(47, 217, 244, 0.08), rgba(47, 217, 244, 0.16));
+  color: var(--vic-primary); border-bottom: 1px solid rgba(47, 217, 244, 0.2);
+}
+.vic-emr .epic-band .meta { color: var(--vic-on-surface-variant); }
+.vic-emr .epic-row { border-bottom-color: rgba(69, 70, 77, 0.18); }
+.vic-emr .epic-row .k { background: var(--vic-bg-low); color: var(--vic-on-surface-variant); border-right-color: rgba(69, 70, 77, 0.2); }
+.vic-emr .epic-row .v { color: var(--vic-on-surface); }
+.vic-emr .epic-row:hover { background: rgba(47, 217, 244, 0.06); }
+.vic-emr .epic-row:hover .k { background: transparent; }
+.vic-emr .epic-flag-bar { background: rgba(255, 180, 171, 0.12); border-color: var(--vic-error); color: var(--vic-on-error-bg); }
+.vic-emr .epic-btn {
+  background: var(--vic-bg-highest); color: var(--vic-on-surface);
+  border: 1px solid rgba(69, 70, 77, 0.5);
+}
+.vic-emr .epic-btn:hover { background: var(--vic-bg-bright); border-color: var(--vic-primary); }
+.vic-emr .epic-btn.primary {
+  background: linear-gradient(to right, var(--vic-primary), #008ea1);
+  color: var(--vic-on-primary); border-color: var(--vic-primary);
+  box-shadow: 0 8px 20px rgba(47, 217, 244, 0.25);
+}
+.vic-emr .epic-btn.primary:hover { background: linear-gradient(to right, #67e8f9, var(--vic-primary)); }
+.vic-emr .epic-statusbar { background: var(--vic-bg-low); color: var(--vic-on-surface-variant); border-top: 1px solid rgba(69, 70, 77, 0.3); }
+
+@layer components {
+  .panel {
+    @apply bg-ink-800 border border-ink-600 rounded-lg;
+  }
+  .panel-header {
+    @apply px-4 py-3 border-b border-ink-600 text-bone-200
+           text-[11px] uppercase tracking-[0.16em] font-medium;
+  }
+  .label-mono {
+    @apply font-mono text-[10px] uppercase tracking-[0.18em] text-bone-400;
+  }
+}
+
+/* Epic-style EMR chrome */
+:root {
+  --epic-titlebar: #2c5e9e;
+  --epic-titlebar-2: #3f78bd;
+  --epic-banner: #d9e7f4;
+  --epic-banner-2: #c9dcef;
+  --epic-toolbar: #edf2f8;
+  --epic-rail: #e7eef6;
+  --epic-rail-active: #ffffff;
+  --epic-row: #ffffff;
+  --epic-row-alt: #f5f8fb;
+  --epic-row-hover: #fff7d6;
+  --epic-band: #c5e3c2;
+  --epic-band-text: #1f4d22;
+  --epic-band-2: #d8edd6;
+  --epic-grid: #b8c4d4;
+  --epic-grid-soft: #dde5ee;
+  --epic-link: #1a5fb4;
+  --epic-warn-bg: #fff5b0;
+  --epic-warn-bd: #d6a800;
+  --epic-flag-bg: #fde0db;
+  --epic-flag-bd: #b3261e;
+}
+
+.epic-root {
+  font-family: 'Segoe UI', Tahoma, 'Inter', system-ui, sans-serif;
+  font-size: 12px;
+  color: #1a2332;
+  background: #cdd9e6;
+}
+
+.epic-titlebar {
+  height: 26px;
+  padding: 0 10px;
+  background: linear-gradient(to bottom, var(--epic-titlebar-2), var(--epic-titlebar));
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #1d4377;
+}
+
+.epic-titlebar .lozenge {
+  background: rgba(255,255,255,0.16);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.epic-menubar {
+  height: 22px;
+  padding: 0 8px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  background: #e8eef6;
+  border-bottom: 1px solid #b6c4d6;
+  font-size: 11.5px;
+  color: #1a2332;
+}
+
+.epic-menubar span { padding: 2px 4px; }
+.epic-menubar span:hover { background: #c8d8ec; }
+
+.epic-banner {
+  background: linear-gradient(to bottom, #e6eef8, var(--epic-banner));
+  border-bottom: 1px solid #95acc7;
+  padding: 6px 12px;
+}
+
+.epic-banner-name { font-size: 14px; font-weight: 600; color: #0f2547; }
+
+.epic-banner-row {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px 18px;
+  font-size: 11px;
+  color: #1a2332;
+  margin-top: 4px;
+}
+
+.epic-banner-row .lbl { color: #4a5b75; margin-right: 4px; }
+.epic-banner-row .alert {
+  background: var(--epic-warn-bg);
+  border: 1px solid var(--epic-warn-bd);
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-weight: 600;
+  color: #5a4400;
+}
+
+.epic-tabs {
+  display: flex;
+  height: 24px;
+  background: #d6e0ec;
+  border-bottom: 1px solid #95acc7;
+  padding: 0 4px;
+  gap: 1px;
+}
+
+.epic-tabs .tab {
+  padding: 4px 12px;
+  font-size: 11px;
+  cursor: pointer;
+  background: #c8d6e6;
+  color: #1a2332;
+  border: 1px solid #95acc7;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  align-self: flex-end;
+  line-height: 1;
+  padding-top: 5px;
+}
+
+.epic-tabs .tab.active {
+  background: #ffffff;
+  color: #0f2547;
+  font-weight: 600;
+  border-bottom: 1px solid #ffffff;
+  margin-bottom: -1px;
+  z-index: 2;
+}
+
+.epic-toolbar {
+  background: var(--epic-toolbar);
+  border-bottom: 1px solid #b6c4d6;
+  padding: 6px 8px;
+  display: flex;
+  gap: 2px;
+  align-items: stretch;
+  overflow-x: auto;
+}
+
+.epic-tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  min-width: 56px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #1a2332;
+  font-size: 10.5px;
+}
+
+.epic-tool:hover { background: #fff; border-color: #b6c4d6; }
+.epic-tool .ico {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: #f8fbff;
+  border: 1px solid #c0cee0;
+  border-radius: 3px;
+}
+
+.epic-tool.active .ico { background: #fff7d6; border-color: var(--epic-warn-bd); }
+.epic-tool-sep { width: 1px; background: #cdd9e6; margin: 4px 4px; }
+
+.epic-rail {
+  width: 132px;
+  background: var(--epic-rail);
+  border-right: 1px solid #b6c4d6;
+  padding: 4px 0;
+  overflow-y: auto;
+}
+
+.epic-rail .item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 11.5px;
+  color: #1a2332;
+  border-bottom: 1px solid #d6dfeb;
+}
+
+.epic-rail .item .ico {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 1px solid #c0cee0;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--epic-link);
+}
+
+.epic-rail .item:hover { background: #fff7d6; }
+.epic-rail .item.active {
+  background: var(--epic-rail-active);
+  font-weight: 600;
+  color: #0f2547;
+  border-left: 3px solid var(--epic-link);
+  padding-left: 5px;
+}
+
+.epic-rail .item.active .ico { background: #fff7d6; border-color: var(--epic-warn-bd); }
+
+.epic-section {
+  border: 1px solid #b6c4d6;
+  background: #fff;
+  margin-bottom: 6px;
+}
+
+.epic-band {
+  background: linear-gradient(to bottom, var(--epic-band-2), var(--epic-band));
+  color: var(--epic-band-text);
+  padding: 3px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-bottom: 1px solid #8eb98c;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.epic-band .meta { font-weight: 400; color: #2f5a31; font-size: 10.5px; }
+
+.epic-row {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  border-bottom: 1px solid var(--epic-grid-soft);
+  min-height: 22px;
+}
+
+.epic-row .k {
+  padding: 3px 8px;
+  background: var(--epic-row-alt);
+  color: #1a2332;
+  border-right: 1px solid var(--epic-grid-soft);
+  font-size: 11.5px;
+}
+
+.epic-row .v { padding: 3px 8px; color: #1a2332; font-size: 11.5px; }
+.epic-row:hover { background: var(--epic-row-hover); }
+.epic-row:hover .k { background: transparent; }
+
+.epic-flag-bar {
+  background: var(--epic-flag-bg);
+  border: 1px solid var(--epic-flag-bd);
+  border-left-width: 4px;
+  padding: 6px 10px;
+  margin: 6px;
+  color: #5a0e0a;
+  font-size: 11.5px;
+}
+
+.epic-btn {
+  background: linear-gradient(to bottom, #fafcff, #dbe5f3);
+  border: 1px solid #95acc7;
+  border-radius: 3px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  color: #1a2332;
+  cursor: pointer;
+}
+
+.epic-btn:hover { background: linear-gradient(to bottom, #fff, #c8d8ec); }
+.epic-btn.primary {
+  background: linear-gradient(to bottom, #5a91d4, #2c5e9e);
+  color: #fff;
+  border-color: #1d4377;
+  font-weight: 600;
+}
+
+.epic-btn.primary:hover { background: linear-gradient(to bottom, #6ea3e4, #3f78bd); }
+
+.epic-statusbar {
+  height: 20px;
+  background: linear-gradient(to bottom, #e8eef6, #c8d6e6);
+  border-top: 1px solid #95acc7;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11px;
+  color: #1a2332;
+}
+
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }

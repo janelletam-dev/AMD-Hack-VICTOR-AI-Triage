@@ -1,0 +1,13 @@
+# Railway deployment config
+# Backend service — FastAPI via uvicorn
+# Frontend service — Vite static build served by `npm run preview`
+# (Configured per-service in the Railway dashboard.)
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
