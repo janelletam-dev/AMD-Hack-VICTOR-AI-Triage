@@ -138,8 +138,16 @@ ABBREV_MAP: dict[str, str] = {
 
 @dataclass(frozen=True)
 class BiomarkerThresholds:
-    helios_stress: float = 0.55
-    helios_distress: float = 0.55
+    """Helios returns bucketed scores at {0.0, 0.33, 0.66, 1.0}, so the
+    natural "elevated" cutoff is anything > 0.5 (i.e. 0.66 or 1.0).
+
+    Apollo is a separate two-recording product and is not used live, so
+    its threshold is documented for parity but never read.
+    """
+    helios_stress: float = 0.5
+    helios_distress: float = 0.5
+    helios_exhaustion: float = 0.66       # only fire on the top bucket
+    helios_mental_strain: float = 0.5     # composite — uniform 0–1 continuous
     apollo_anxiety: float = 0.50
     cvd_marker: float = 0.50
 
@@ -188,7 +196,12 @@ class ConcordanceEngine:
         return [m.group(0) for p in self._tier4 for m in p.finditer(transcript)]
 
     def biomarker_elevated(self, snapshot: dict) -> tuple[bool, list[str]]:
-        """Return (elevated?, list of human-readable signal descriptions)."""
+        """Return (elevated?, list of human-readable signal descriptions).
+
+        Reads the Helios shape returned by ThymiaService:
+          { stress, distress, exhaustion, sleepPropensity, lowSelfEsteem, mentalStrain }
+        Apollo / CVD blocks are still inspected if a future caller adds them.
+        """
         signals: list[str] = []
         helios = snapshot.get("helios", {}) or {}
         apollo = snapshot.get("apollo", {}) or {}
@@ -198,6 +211,10 @@ class ConcordanceEngine:
             signals.append(f"stress: {helios['stress']:.2f}")
         if helios.get("distress", 0.0) > self.thresholds.helios_distress:
             signals.append(f"distress: {helios['distress']:.2f}")
+        if helios.get("exhaustion", 0.0) > self.thresholds.helios_exhaustion:
+            signals.append(f"exhaustion: {helios['exhaustion']:.2f}")
+        if helios.get("mentalStrain", 0.0) > self.thresholds.helios_mental_strain:
+            signals.append(f"mental strain: {helios['mentalStrain']:.2f}")
         if apollo.get("anxiety", 0.0) > self.thresholds.apollo_anxiety:
             signals.append(f"anxiety: {apollo['anxiety']:.2f}")
         for k, v in cvd.items():

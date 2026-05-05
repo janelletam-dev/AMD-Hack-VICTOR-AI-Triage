@@ -17,20 +17,20 @@ function Gauge({ label, value }) {
 }
 
 export default function BiomarkerGauges({ data }) {
-  const helios = data?.helios || {};
-  const apollo = data?.apollo || {};
+  // Helios returns bucketed values {0, 0.33, 0.66, 1} per
+  // docs.thymia.ai/helios/interpreting-results. Field names are
+  // canonical — do not rename.
+  const h = data?.helios || {};
   return (
     <div className="panel">
-      <div className="panel-header">voice biomarkers · thymia</div>
+      <div className="panel-header">voice biomarkers · thymia helios</div>
       <div className="p-4 grid grid-cols-1 gap-3">
-        <div className="label-mono text-bone-200 mb-1">helios</div>
-        <Gauge label="stress" value={helios.stress} />
-        <Gauge label="distress" value={helios.distress} />
-        <Gauge label="burnout" value={helios.burnout} />
-        <Gauge label="tiredness" value={helios.tiredness} />
-        <div className="label-mono text-bone-200 mb-1 mt-2">apollo</div>
-        <Gauge label="anxiety" value={apollo.anxiety} />
-        <Gauge label="depression" value={apollo.depression} />
+        <Gauge label="mental strain" value={h.mentalStrain} />
+        <Gauge label="stress" value={h.stress} />
+        <Gauge label="distress" value={h.distress} />
+        <Gauge label="exhaustion" value={h.exhaustion} />
+        <Gauge label="sleep propensity" value={h.sleepPropensity} />
+        <Gauge label="low self-esteem" value={h.lowSelfEsteem} />
       </div>
     </div>
   );

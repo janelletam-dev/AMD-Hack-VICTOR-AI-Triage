@@ -117,13 +117,14 @@ function EpicBar({ label, value, group }) {
 }
 
 export function EpicBiomarkersSection({ data }) {
-  const helios = data?.helios || {};
-  const apollo = data?.apollo || {};
+  // Field names are canonical thymia Helios fields — see
+  // docs.thymia.ai/helios/interpreting-results.
+  const h = data?.helios || {};
   return (
     <div className="epic-section">
       <div className="epic-band">
-        <span>Voice Biomarkers · Thymia</span>
-        <span className="meta">Captured 4:00 PM · 28-second sample</span>
+        <span>Voice Biomarkers · Thymia Helios</span>
+        <span className="meta">Captured from chief-complaint utterance</span>
       </div>
       {!data ? (
         <div style={{ padding: "8px 10px", color: "#4a5b75", fontStyle: "italic" }}>
@@ -131,12 +132,12 @@ export function EpicBiomarkersSection({ data }) {
         </div>
       ) : (
         <>
-          <EpicBar group="Helios" label="Stress" value={helios.stress} />
-          <EpicBar group="Helios" label="Distress" value={helios.distress} />
-          <EpicBar group="Helios" label="Burnout" value={helios.burnout} />
-          <EpicBar group="Helios" label="Tiredness" value={helios.tiredness} />
-          <EpicBar group="Apollo" label="Anxiety" value={apollo.anxiety} />
-          <EpicBar group="Apollo" label="Depression" value={apollo.depression} />
+          <EpicBar group="Helios" label="Mental Strain" value={h.mentalStrain} />
+          <EpicBar group="Helios" label="Stress" value={h.stress} />
+          <EpicBar group="Helios" label="Distress" value={h.distress} />
+          <EpicBar group="Helios" label="Exhaustion" value={h.exhaustion} />
+          <EpicBar group="Helios" label="Sleep Propensity" value={h.sleepPropensity} />
+          <EpicBar group="Helios" label="Low Self-Esteem" value={h.lowSelfEsteem} />
         </>
       )}
     </div>

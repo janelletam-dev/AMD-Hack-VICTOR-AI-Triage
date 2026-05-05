@@ -49,9 +49,10 @@ export default function ClinicianDashboard() {
       }]);
     } else if (type === "biomarker") {
       setBiomarkers(data);
+      const h = data?.helios || {};
       if (ts) setLogs(prev => [...prev.slice(-50), {
         ts, color: "var(--vic-secondary)",
-        text: `THYMIA: helios stress ${data.helios.stress.toFixed(2)} · apollo anxiety ${data.apollo.anxiety.toFixed(2)}`,
+        text: `THYMIA Helios: stress ${(h.stress ?? 0).toFixed(2)} · distress ${(h.distress ?? 0).toFixed(2)} · mental strain ${(h.mentalStrain ?? 0).toFixed(2)}`,
       }]);
     } else if (type === "concordance_flag") {
       setFlag({
@@ -143,6 +144,8 @@ export default function ClinicianDashboard() {
 
             <IdentityCard identity={identity} />
 
+            <BiomarkerCard data={biomarkers} />
+
             {transcript && (
               <section className="vic-glass" style={{
                 padding: 20, borderRadius: 16,
@@ -220,6 +223,93 @@ function ActionFooter({ hasSoap, onApprove, onRunDemo, running }) {
         ☁ Approve &amp; Push to Epic (EHR)
       </button>
     </footer>
+  );
+}
+
+function BiomarkerCard({ data }) {
+  // Helios canonical fields — see docs.thymia.ai/helios/interpreting-results.
+  const h = data?.helios || {};
+  const fields = [
+    { key: "mentalStrain", label: "Mental Strain" },
+    { key: "stress", label: "Stress" },
+    { key: "distress", label: "Distress" },
+    { key: "exhaustion", label: "Exhaustion" },
+    { key: "sleepPropensity", label: "Sleep Propensity" },
+    { key: "lowSelfEsteem", label: "Low Self-Esteem" },
+  ];
+  const hasAny = fields.some(f => typeof h[f.key] === "number");
+  return (
+    <section className="vic-glass" style={{
+      padding: 20, borderRadius: 16,
+      border: "1px solid rgba(47, 217, 244, 0.15)",
+      display: "flex", flexDirection: "column", gap: 12,
+    }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700,
+        color: "rgba(47, 217, 244, 0.8)",
+        textTransform: "uppercase", letterSpacing: "0.2em",
+      }}>
+        Voice Biomarkers · thymia Helios
+      </div>
+      {!hasAny ? (
+        <div style={{
+          fontSize: 13, fontStyle: "italic",
+          color: "var(--vic-on-surface-variant)",
+        }}>
+          Awaiting voice sample…
+        </div>
+      ) : (
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 14,
+        }}>
+          {fields.map(f => (
+            <BiomarkerBar key={f.key} label={f.label} value={h[f.key]} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BiomarkerBar({ label, value }) {
+  const v = typeof value === "number" ? value : 0;
+  const pct = Math.round(v * 100);
+  const high = v > 0.5;
+  return (
+    <div>
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        marginBottom: 4,
+      }}>
+        <span style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 10, fontWeight: 700,
+          color: "var(--vic-on-surface-variant)",
+          textTransform: "uppercase", letterSpacing: "0.16em",
+        }}>{label}</span>
+        <span style={{
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+          color: high ? "var(--vic-error)" : "var(--vic-on-surface)",
+          fontWeight: 700,
+        }}>
+          {v.toFixed(2)}{high ? " HIGH" : ""}
+        </span>
+      </div>
+      <div style={{
+        height: 6, background: "rgba(255,255,255,0.06)",
+        borderRadius: 999, overflow: "hidden",
+      }}>
+        <div style={{
+          height: "100%", width: `${pct}%`,
+          background: high
+            ? "linear-gradient(to right, #ffb46f, var(--vic-error))"
+            : "linear-gradient(to right, var(--vic-primary), #67e8f9)",
+          transition: "width 0.4s ease",
+        }} />
+      </div>
+    </div>
   );
 }
 

@@ -62,9 +62,10 @@ class DeepgramService:
         self._conn.on(LiveTranscriptionEvents.Close, self._handle_close)
         self._conn.on(LiveTranscriptionEvents.UtteranceEnd, self._handle_utterance_end)
 
+        # Flux Multilingual — auto-detects language, supports code-switching,
+        # and emits turn-detection signals natively. See VICTOR_PRD.md §4.
         options = LiveOptions(
-            model="nova-2",
-            language="multi",
+            model="flux-general-multi",
             encoding="linear16",
             sample_rate=settings.sample_rate_hz,
             channels=1,
