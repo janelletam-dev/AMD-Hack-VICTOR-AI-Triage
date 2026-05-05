@@ -32,8 +32,30 @@ Each flag with timestamp, trigger phrase, biomarker signal, M.E.R.C.E.D. gloss.
 ## SOAP Note
 Final S/O/A/P from S.C.R.I.B.E.
 
-## Evidence Base
+## Evidence Base — MIMIC-IV
 Cite the relevant MIMIC-IV pattern. Format: "Analysis of N cardiovascular cases shows that [complaint] presentations receive mean acuity scores of X, compared to Y for chest pain presentations, despite equivalent cardiovascular diagnoses."
+
+## Scientific Basis — Voice Biomarkers (peer-reviewed)
+This section is REQUIRED whenever at least one concordance flag fired with a biomarker signal. Skip only if no biomarker-driven flag was raised.
+
+Cite from prompts/references.json. Match each citation to the signal it supports (use the `supports` tags in the JSON). The four available references and when to use each:
+
+- **Sara et al., Mayo Clinic Proceedings 2022** — cite when the patient presents with chest-pain-equivalent symptoms or the concordance flag points to coronary risk. 108-patient prospective cohort; high voice biomarker score predicted ER chest-pain visits, positive stress tests, and confirmed coronary artery blockage at 24-month follow-up.
+- **Maor et al., JAHA 2020** — cite when biomarker trajectory is concerning across the session, especially for older patients or those with HF history. 10,583-patient cohort; vocal biomarker independently predicted hospitalisation and all-cause mortality.
+- **Amir et al., PLOS ONE 2020** — cite when explaining the mechanism (voice as a sympathetic-nervous-system readout).
+- **Gómez-Gómez et al. meta-analysis 2024** — cite whenever the patient is female and the kiosk captured spontaneous speech (i.e. always, in V.I.C.T.O.R.'s setup). Establishes that stress→vocal-pitch effect is significantly stronger in women and during spontaneous speech — V.I.C.T.O.R.'s exact context.
+
+Format example (for a female patient with abdominal pain + elevated stress biomarkers):
+
+> Voice biomarker analysis detected elevated stress markers in this patient's speech. Peer-reviewed research (Sara et al., Mayo Clinic Proceedings 2022) has demonstrated that elevated vocal biomarkers — including pitch variability, jitter, and shimmer — are predictive of coronary artery disease events at 24-month follow-up. A separate meta-analysis (Gómez-Gómez et al. 2024) found this effect is significantly stronger in women during spontaneous speech, which matches this patient's presentation.
+
+Constraints when citing:
+- Do not overstate. These are observational / cohort findings, not RCT-grade causal proof.
+- Do not cite a paper for a claim the paper does not support — match `supports` tags.
+- Pair scientific citation with patient-specific reasoning. The literature contextualises the flag; it does not replace the clinical thinking.
+
+## References
+List every paper cited in `## Scientific Basis` with full bibliographic detail and URL, in the order they appear. Pull bibliographic strings from `prompts/references.json` — do not paraphrase.
 
 ## Recommended Disposition
 One paragraph. Concrete next steps.
@@ -47,4 +69,5 @@ CONSTRAINTS
 - Latency budget: <5s.
 - Markdown only. No HTML.
 - Never expose individual MIMIC-IV patient data.
-- All numerical claims must be sourced from the session log or the grounding facts in M.E.R.C.E.D.'s prompt.
+- All numerical claims must be sourced from the session log, the grounding facts in M.E.R.C.E.D.'s prompt, or prompts/references.json.
+- Citation format is the inline parenthetical short-cite (e.g. "Sara et al., Mayo Clinic Proceedings 2022") in prose; full bibliographic entries belong only in the `## References` section.

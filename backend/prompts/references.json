@@ -1,0 +1,75 @@
+{
+  "version": "1.0",
+  "description": "Peer-reviewed scientific basis for V.I.C.T.O.R.'s voice-biomarker triage. Cited by E.L.M.E.R. in evidence reports and referenced in M.E.R.C.E.D.'s clinical glosses.",
+  "references": [
+    {
+      "id": "sara2022",
+      "authors": "Sara JDS, Maor E, Borlaug B, Lewis BR, Orbelo D, Lerman LO, Lerman A",
+      "year": 2022,
+      "title": "Noninvasive Voice Biomarker Is Associated With Incident Coronary Artery Disease Events at Follow-up",
+      "journal": "Mayo Clinic Proceedings",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/35341593/",
+      "key_findings": [
+        "108 patients, 30-second voice recordings, median 24-month follow-up",
+        "6 acoustic features analysed: pitch, jitter, shimmer, MFCCs, loudness, formants",
+        "High voice biomarker score predicted ER visits for chest pain, positive stress tests, and confirmed coronary artery blockage"
+      ],
+      "short_cite": "Sara et al., Mayo Clinic Proceedings 2022",
+      "supports": ["chest_pain", "ed_chest_pain_visits", "coronary_artery_disease"]
+    },
+    {
+      "id": "maor2020",
+      "authors": "Maor E, Perry D, Mevorach D, Taiblum N, Luz Y, Mazin I, Lerman A, Koren G, Shalev V",
+      "year": 2020,
+      "title": "Vocal Biomarker Is Associated With Hospitalization and Mortality Among Heart Failure Patients",
+      "journal": "Journal of the American Heart Association",
+      "url": "https://www.ahajournals.org/doi/10.1161/JAHA.119.013359",
+      "key_findings": [
+        "10,583 heart failure patients",
+        "Acoustic features: Mel Cepstrum, pitch, jitter, shimmer, loudness",
+        "Voice biomarker independently predicted hospitalisation and all-cause mortality"
+      ],
+      "short_cite": "Maor et al., JAHA 2020",
+      "supports": ["heart_failure", "hospitalisation_risk", "mortality"]
+    },
+    {
+      "id": "amir2020",
+      "authors": "Amir O, Abraham WT, Azzam ZS, Berger G, Anker SD, Pinney SP, Burkhoff D, Shallom ID, Lotan C, Edelman ER",
+      "year": 2020,
+      "title": "Non-invasive vocal biomarker is associated with pulmonary hypertension",
+      "journal": "PLOS ONE",
+      "url": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0231441",
+      "key_findings": [
+        "Voice analysis indirectly assesses sympathetic nervous system state",
+        "Provides a non-invasive means to identify patients at elevated cardiac risk"
+      ],
+      "short_cite": "Amir et al., PLOS ONE 2020",
+      "supports": ["sympathetic_nervous_system", "pulmonary_hypertension", "cardiac_risk"]
+    },
+    {
+      "id": "gomezgomez2024",
+      "authors": "Gómez-Gómez I, Pérez-Marín M, Ferrari-Goelzer L, Hellín-Gil MF, Berenguer A, Cerveró-Sahuquillo S, Rico-Bordera P, Talavera M, Fierro-Marrero J",
+      "year": 2024,
+      "title": "The Fundamental Frequency of Voice as a Potential Stress Biomarker: A Systematic Review and Meta-Analysis",
+      "journal": "Healthcare (Meta-analysis)",
+      "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12531429/",
+      "key_findings": [
+        "Stress significantly increases vocal fundamental frequency (F0)",
+        "Effect is significantly STRONGER in women",
+        "Effect is significantly STRONGER during spontaneous speech (vs read-aloud)",
+        "Direct relevance to V.I.C.T.O.R.: kiosk captures spontaneous patient speech, and women are the most at-risk population for atypical-CVD under-triage"
+      ],
+      "short_cite": "Gómez-Gómez et al., Healthcare meta-analysis 2024",
+      "supports": ["stress_detection", "female_population", "spontaneous_speech"]
+    }
+  ],
+  "guidance": {
+    "when_to_cite": "Cite at least one reference whenever a concordance flag fires AND the biomarker signal is what triggered (or co-triggered) the flag. The Sara/Maor papers ground the cardiovascular link; Gómez-Gómez grounds the women-and-spontaneous-speech amplification, which is V.I.C.T.O.R.'s exact use case.",
+    "format": "Inline parenthetical: '(Sara et al., Mayo Clinic Proceedings 2022)'. Do not include URLs in the prose — they appear in the report's References section.",
+    "constraints": [
+      "Do not overstate. These are observational / cohort findings, not clinical-trial-grade causal proof.",
+      "Do not cite a paper for a claim the paper does not support — match the `supports` tags to the signal.",
+      "Always pair scientific citation with the patient-specific reasoning; don't let the literature do the clinical work."
+    ]
+  }
+}
