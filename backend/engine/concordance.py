@@ -138,16 +138,24 @@ ABBREV_MAP: dict[str, str] = {
 
 @dataclass(frozen=True)
 class BiomarkerThresholds:
-    """Helios returns bucketed scores at {0.0, 0.33, 0.66, 1.0}, so the
-    natural "elevated" cutoff is anything > 0.5 (i.e. 0.66 or 1.0).
+    """Helios returns bucketed scores at {0.0, 0.33, 0.66, 1.0}.
 
-    Apollo is a separate two-recording product and is not used live, so
-    its threshold is documented for parity but never read.
+    Threshold rationale (clinically tuned, not from thymia docs):
+      - stress / distress / mentalStrain ≥ 0.66: fire only on the top two
+        buckets. Avoids false flags on patients who are just nervous in the ER.
+      - exhaustion ≥ 0.33: deliberately looser, because fatigue is one of
+        the most commonly missed atypical CVD symptoms in women. MIMIC-IV
+        showed weakness/fatigue in female CVD patients averaging acuity 2.46
+        — under-triaged.
+
+    Apollo is a separate two-recording product (mood question + read-aloud,
+    each ≥15s) and is deferred to end-of-triage; E.L.M.E.R. requests it.
+    Its threshold is documented for parity but never read on the hot path.
     """
-    helios_stress: float = 0.5
-    helios_distress: float = 0.5
-    helios_exhaustion: float = 0.66       # only fire on the top bucket
-    helios_mental_strain: float = 0.5     # composite — uniform 0–1 continuous
+    helios_stress: float = 0.66
+    helios_distress: float = 0.66
+    helios_mental_strain: float = 0.66
+    helios_exhaustion: float = 0.33   # fatigue = key atypical-CVD signal
     apollo_anxiety: float = 0.50
     cvd_marker: float = 0.50
 
@@ -207,18 +215,20 @@ class ConcordanceEngine:
         apollo = snapshot.get("apollo", {}) or {}
         cvd = snapshot.get("cvd", {}) or {}
 
-        if helios.get("stress", 0.0) > self.thresholds.helios_stress:
+        # Use `>=` not `>` so a bucketed value of exactly 0.66 (which is what
+        # Helios returns for the second-highest bucket) actually fires.
+        if helios.get("stress", 0.0) >= self.thresholds.helios_stress:
             signals.append(f"stress: {helios['stress']:.2f}")
-        if helios.get("distress", 0.0) > self.thresholds.helios_distress:
+        if helios.get("distress", 0.0) >= self.thresholds.helios_distress:
             signals.append(f"distress: {helios['distress']:.2f}")
-        if helios.get("exhaustion", 0.0) > self.thresholds.helios_exhaustion:
+        if helios.get("exhaustion", 0.0) >= self.thresholds.helios_exhaustion:
             signals.append(f"exhaustion: {helios['exhaustion']:.2f}")
-        if helios.get("mentalStrain", 0.0) > self.thresholds.helios_mental_strain:
+        if helios.get("mentalStrain", 0.0) >= self.thresholds.helios_mental_strain:
             signals.append(f"mental strain: {helios['mentalStrain']:.2f}")
-        if apollo.get("anxiety", 0.0) > self.thresholds.apollo_anxiety:
+        if apollo.get("anxiety", 0.0) >= self.thresholds.apollo_anxiety:
             signals.append(f"anxiety: {apollo['anxiety']:.2f}")
         for k, v in cvd.items():
-            if v > self.thresholds.cvd_marker:
+            if v >= self.thresholds.cvd_marker:
                 signals.append(f"{k}: {v:.2f}")
         return (bool(signals), signals)
 

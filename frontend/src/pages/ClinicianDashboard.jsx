@@ -226,18 +226,29 @@ function ActionFooter({ hasSoap, onApprove, onRunDemo, running }) {
   );
 }
 
+// Friendly clinical labels for the dashboard. The API field names + WS
+// event payload + concordance engine all stay canonical (mentalStrain,
+// exhaustion, sleepPropensity, lowSelfEsteem) — only this card's labels
+// are aliased. If thymia ever renames a field, only this dict changes.
+const HELIOS_DISPLAY = [
+  { key: "mentalStrain",    label: "Mental Strain",         concerningWhen: "high" },
+  { key: "stress",          label: "Stress",                concerningWhen: "high" },
+  { key: "distress",        label: "Distress",              concerningWhen: "high" },
+  { key: "exhaustion",      label: "Burnout / Exhaustion",  concerningWhen: "high" },
+  { key: "sleepPropensity", label: "Fatigue",               concerningWhen: "high" },
+  // Inverted: API gives `lowSelfEsteem`, dashboard shows `Confidence`.
+  // High raw value (low self-esteem) → low confidence display.
+  {
+    key: "lowSelfEsteem",
+    label: "Confidence",
+    transform: (v) => 1 - v,
+    concerningWhen: "low",
+  },
+];
+
 function BiomarkerCard({ data }) {
-  // Helios canonical fields — see docs.thymia.ai/helios/interpreting-results.
   const h = data?.helios || {};
-  const fields = [
-    { key: "mentalStrain", label: "Mental Strain" },
-    { key: "stress", label: "Stress" },
-    { key: "distress", label: "Distress" },
-    { key: "exhaustion", label: "Exhaustion" },
-    { key: "sleepPropensity", label: "Sleep Propensity" },
-    { key: "lowSelfEsteem", label: "Low Self-Esteem" },
-  ];
-  const hasAny = fields.some(f => typeof h[f.key] === "number");
+  const hasAny = HELIOS_DISPLAY.some((f) => typeof h[f.key] === "number");
   return (
     <section className="vic-glass" style={{
       padding: 20, borderRadius: 16,
@@ -264,19 +275,34 @@ function BiomarkerCard({ data }) {
           gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
           gap: 14,
         }}>
-          {fields.map(f => (
-            <BiomarkerBar key={f.key} label={f.label} value={h[f.key]} />
-          ))}
+          {HELIOS_DISPLAY.map((f) => {
+            const raw = typeof h[f.key] === "number" ? h[f.key] : 0;
+            const display = f.transform ? f.transform(raw) : raw;
+            // Concordance thresholds the backend uses: stress/distress/
+            // mentalStrain ≥0.66, exhaustion ≥0.33. Keep the dashboard
+            // "concerning" indicator aligned with those.
+            const concernCutoffHigh = f.key === "exhaustion" ? 0.33 : 0.66;
+            const concerning = f.concerningWhen === "high"
+              ? display >= concernCutoffHigh
+              : display <= 0.34;
+            return (
+              <BiomarkerBar
+                key={f.key}
+                label={f.label}
+                value={display}
+                concerning={concerning}
+              />
+            );
+          })}
         </div>
       )}
     </section>
   );
 }
 
-function BiomarkerBar({ label, value }) {
+function BiomarkerBar({ label, value, concerning }) {
   const v = typeof value === "number" ? value : 0;
   const pct = Math.round(v * 100);
-  const high = v > 0.5;
   return (
     <div>
       <div style={{
@@ -291,10 +317,10 @@ function BiomarkerBar({ label, value }) {
         }}>{label}</span>
         <span style={{
           fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
-          color: high ? "var(--vic-error)" : "var(--vic-on-surface)",
+          color: concerning ? "var(--vic-error)" : "var(--vic-on-surface)",
           fontWeight: 700,
         }}>
-          {v.toFixed(2)}{high ? " HIGH" : ""}
+          {v.toFixed(2)}{concerning ? " ⚠" : ""}
         </span>
       </div>
       <div style={{
@@ -303,7 +329,7 @@ function BiomarkerBar({ label, value }) {
       }}>
         <div style={{
           height: "100%", width: `${pct}%`,
-          background: high
+          background: concerning
             ? "linear-gradient(to right, #ffb46f, var(--vic-error))"
             : "linear-gradient(to right, var(--vic-primary), #67e8f9)",
           transition: "width 0.4s ease",
