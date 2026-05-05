@@ -462,3 +462,128 @@
 
 @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
 .pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+/* Markdown body inside the EvidenceReport — dark/teal V.I.C.T.O.R. theme */
+.evidence-report-md {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--vic-on-surface);
+}
+.evidence-report-md h1,
+.evidence-report-md h2,
+.evidence-report-md h3 {
+  font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  color: var(--vic-on-surface);
+  margin: 22px 0 10px;
+  font-weight: 600;
+}
+.evidence-report-md h1 { font-size: 22px; padding-bottom: 6px; border-bottom: 1px solid rgba(47, 217, 244, 0.2); }
+.evidence-report-md h2 { font-size: 17px; color: var(--vic-primary); text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; font-family: 'JetBrains Mono', monospace; margin-top: 26px; }
+.evidence-report-md h3 { font-size: 14px; color: var(--vic-on-surface-variant); }
+.evidence-report-md p  { margin: 8px 0; color: var(--vic-on-surface); }
+.evidence-report-md ul,
+.evidence-report-md ol { padding-left: 22px; margin: 8px 0; }
+.evidence-report-md li { margin: 4px 0; }
+.evidence-report-md strong { color: var(--vic-primary); font-weight: 700; }
+.evidence-report-md em { color: var(--vic-on-surface-variant); }
+.evidence-report-md code {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(47, 217, 244, 0.08);
+  border: 1px solid rgba(47, 217, 244, 0.18);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12.5px;
+  color: var(--vic-primary);
+}
+.evidence-report-md pre {
+  background: var(--vic-bg-low);
+  border: 1px solid rgba(69, 70, 77, 0.4);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+.evidence-report-md pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--vic-on-surface);
+}
+.evidence-report-md table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: 13.5px;
+}
+.evidence-report-md th,
+.evidence-report-md td {
+  padding: 8px 12px;
+  border: 1px solid rgba(69, 70, 77, 0.45);
+  text-align: left;
+  vertical-align: top;
+}
+.evidence-report-md th {
+  background: rgba(47, 217, 244, 0.08);
+  color: var(--vic-primary);
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.evidence-report-md td { color: var(--vic-on-surface); background: rgba(255,255,255,0.015); }
+.evidence-report-md blockquote {
+  border-left: 3px solid var(--vic-primary);
+  margin: 12px 0;
+  padding: 4px 14px;
+  color: var(--vic-on-surface-variant);
+  background: rgba(47, 217, 244, 0.05);
+  border-radius: 0 8px 8px 0;
+}
+.evidence-report-md a {
+  color: var(--vic-primary);
+  text-decoration: underline;
+  text-decoration-color: rgba(47, 217, 244, 0.4);
+}
+.evidence-report-md hr {
+  border: none;
+  border-top: 1px solid rgba(69, 70, 77, 0.4);
+  margin: 18px 0;
+}
+
+/* Light-mode overrides — Epic-flavoured rendering for the report body */
+.evidence-report-md.light { color: #1a2332; }
+.evidence-report-md.light h1,
+.evidence-report-md.light h2,
+.evidence-report-md.light h3 { color: #0f1a2a; }
+.evidence-report-md.light h1 { border-bottom: 1px solid #c8d6e6; }
+.evidence-report-md.light h2 { color: #1a5fb4; }
+.evidence-report-md.light h3 { color: #465364; }
+.evidence-report-md.light p,
+.evidence-report-md.light li { color: #1a2332; }
+.evidence-report-md.light strong { color: #1a5fb4; }
+.evidence-report-md.light em { color: #465364; }
+.evidence-report-md.light code {
+  background: #eef3f9;
+  border: 1px solid #cfd6de;
+  color: #1a5fb4;
+}
+.evidence-report-md.light pre {
+  background: #f8fafc;
+  border: 1px solid #cfd6de;
+}
+.evidence-report-md.light pre code { color: #1a2332; }
+.evidence-report-md.light th,
+.evidence-report-md.light td { border: 1px solid #b6c4d6; }
+.evidence-report-md.light th {
+  background: #e8eef6;
+  color: #0f2547;
+}
+.evidence-report-md.light td { color: #1a2332; background: #fff; }
+.evidence-report-md.light blockquote {
+  border-left: 3px solid #1a5fb4;
+  background: #eef3f9;
+  color: #465364;
+}
+.evidence-report-md.light a { color: #1a5fb4; text-decoration-color: rgba(26, 95, 180, 0.4); }
+.evidence-report-md.light hr { border-top: 1px solid #cfd6de; }

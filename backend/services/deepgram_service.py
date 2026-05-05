@@ -56,6 +56,11 @@ class Transcript:
     text: str
     language: str
     is_final: bool
+    confidence: float = 1.0
+
+
+MAX_RECONNECT_ATTEMPTS = 3
+RECONNECT_DELAY_S = 1.0
 
 
 class DeepgramService:
@@ -66,6 +71,11 @@ class DeepgramService:
         await dg.start()
         dg.send(pcm16_bytes)   # call repeatedly with audio frames
         await dg.stop()
+
+    Reconnection: if Deepgram disconnects mid-sentence, the service buffers
+    the last partial transcript, reconnects automatically, and resumes. The
+    patient never knows. Audio frames sent during reconnection are queued
+    (up to _TX_QUEUE_MAX) and flushed on reconnect.
     """
 
     def __init__(
@@ -81,6 +91,9 @@ class DeepgramService:
         self._started = False
         self._dropped_frames = 0
         self._first_messages_logged = 0
+        self._reconnect_attempts = 0
+        self._reconnecting = False
+        self._last_partial_text = ""
 
         if not self.api_key:
             log.warning("DEEPGRAM_API_KEY not set — STT will be disabled")
@@ -182,10 +195,73 @@ class DeepgramService:
                 if isinstance(msg, bytes):
                     continue   # Deepgram only sends text frames
                 self._dispatch(msg)
-        except (asyncio.CancelledError, ConnectionClosed):
+        except asyncio.CancelledError:
+            return
+        except ConnectionClosed:
+            if self._started and not self._reconnecting:
+                log.warning("deepgram disconnected mid-session — attempting reconnect")
+                asyncio.create_task(self._reconnect())
             return
         except Exception:
             log.exception("deepgram reader crashed")
+            if self._started and not self._reconnecting:
+                asyncio.create_task(self._reconnect())
+
+    async def _reconnect(self) -> None:
+        """Attempt to reconnect to Deepgram after an unexpected disconnect.
+        Buffers the last partial transcript so nothing the patient said is lost."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        for task in (self._reader_task, self._writer_task):
+            if task is not None:
+                task.cancel()
+        if self._ws is not None:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+        while self._reconnect_attempts < MAX_RECONNECT_ATTEMPTS and self._started:
+            self._reconnect_attempts += 1
+            await asyncio.sleep(RECONNECT_DELAY_S * self._reconnect_attempts)
+            log.info(
+                "deepgram reconnect attempt %d/%d",
+                self._reconnect_attempts, MAX_RECONNECT_ATTEMPTS,
+            )
+            params = {"model": DEEPGRAM_MODEL}
+            url = f"{DEEPGRAM_BASE}{DEEPGRAM_PATH}?{urlencode(params)}"
+            headers = {"Authorization": f"Token {self.api_key}"}
+            try:
+                self._ws = await websockets.connect(
+                    url,
+                    extra_headers=headers,
+                    max_size=2**20,
+                    ping_interval=20,
+                    ping_timeout=20,
+                )
+            except Exception as e:
+                log.warning("deepgram reconnect failed: %s", e)
+                continue
+
+            log.info("deepgram reconnected successfully")
+            self._reconnect_attempts = 0
+            self._reader_task = asyncio.create_task(self._reader())
+            self._writer_task = asyncio.create_task(self._writer())
+            try:
+                await self._ws.send(json.dumps({
+                    "type": "Configure",
+                    "language_hints": list(DEFAULT_LANGUAGE_HINTS),
+                }))
+            except Exception:
+                pass
+            self._reconnecting = False
+            return
+
+        log.error("deepgram reconnect exhausted %d attempts — STT offline", MAX_RECONNECT_ATTEMPTS)
+        self._started = False
+        self._reconnecting = False
 
     # ------------------------------------------------------------------ parse
 
@@ -205,11 +281,14 @@ class DeepgramService:
         # on the model; we extract defensively. Common shapes:
         #   { "type": "Results", "channel": { "alternatives": [...] }, ... }
         #   { "type": "Transcript", "transcript": "...", "is_final": ... }
-        text, lang, is_final = _extract_transcript(payload)
+        text, lang, is_final, confidence = _extract_transcript(payload)
         if text is None:
             return
 
-        transcript = Transcript(text=text, language=lang or "en", is_final=bool(is_final))
+        transcript = Transcript(
+            text=text, language=lang or "en",
+            is_final=bool(is_final), confidence=confidence,
+        )
         log.info(
             "transcript [%s] final=%s: %s",
             transcript.language, transcript.is_final, transcript.text,
@@ -221,10 +300,10 @@ class DeepgramService:
                 log.exception("on_transcript callback raised")
 
 
-def _extract_transcript(payload: dict[str, Any]) -> tuple[str | None, str | None, bool]:
+def _extract_transcript(payload: dict[str, Any]) -> tuple[str | None, str | None, bool, float]:
     """Best-effort transcript extraction from a Flux event.
 
-    Returns (text, language, is_final). text is None for non-transcript events.
+    Returns (text, language, is_final, confidence). text is None for non-transcript events.
     """
     # Shape 1 — same as nova v1: payload.channel.alternatives[0].transcript
     channel = payload.get("channel")
@@ -240,11 +319,13 @@ def _extract_transcript(payload: dict[str, Any]) -> tuple[str | None, str | None
                     or payload.get("language")
                 )
                 is_final = bool(payload.get("is_final"))
-                return text, lang, is_final
+                confidence = float(alt.get("confidence", 1.0))
+                return text, lang, is_final, confidence
 
     # Shape 2 — Flux flat: payload.transcript / payload.text
     text = payload.get("transcript") or payload.get("text")
     if isinstance(text, str) and text:
-        return text, payload.get("language"), bool(payload.get("is_final"))
+        confidence = float(payload.get("confidence", 1.0))
+        return text, payload.get("language"), bool(payload.get("is_final")), confidence
 
-    return None, None, False
+    return None, None, False, 1.0

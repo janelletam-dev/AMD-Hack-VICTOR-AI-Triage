@@ -305,6 +305,42 @@ class EmergencyDetection:
     matched_phrase: str
 
 
+# ---------------------------------------------------------------------------
+# ESI-2 safety keywords — hardcoded BEFORE the LLM. These phrases indicate
+# a potentially life-threatening condition but aren't as immediately critical
+# as ESI-1. The system auto-escalates to ESI-2 regardless of what the LLM
+# thinks. Never rely solely on AI for life-threatening keywords.
+# ---------------------------------------------------------------------------
+
+SAFETY_KEYWORDS_ESI2: tuple[EmergencyKeyword, ...] = (
+    EmergencyKeyword("chest pain", "ESI-2", (
+        r"\bchest\s+pain\b",
+        r"\bpain\s+in\s+(my\s+)?chest\b",
+        r"\bmy\s+chest\s+hurts?\b",
+        r"\btightness\s+in\s+(my\s+)?chest\b",
+        r"\bchest\s+tightness\b",
+    )),
+    EmergencyKeyword("breathing difficulty", "ESI-2", (
+        r"\bcan'?t\s+breathe\b",
+        r"\bhard\s+to\s+breathe\b",
+        r"\bdifficulty\s+breathing\b",
+        r"\bshort(ness)?\s+of\s+breath\b",
+        r"\btrouble\s+breathing\b",
+    )),
+    EmergencyKeyword("cardiac concern", "ESI-2", (
+        r"\bheart\s+attack\b",
+        r"\bhaving\s+a\s+heart\b",
+        r"\bcrushing\b",
+        r"\bheart\s+is\s+(racing|pounding|fluttering)\b",
+    )),
+    EmergencyKeyword("subjective dying", "ESI-2", (
+        r"\bfeel\s+like\s+i\s*('?m|am)\s+dying\b",
+        r"\bfeel\s+like\s+i\s*('?m|am)\s+going\s+to\s+die\b",
+        r"\bsomething\s+is\s+(really\s+)?wrong\b",
+    )),
+)
+
+
 def detect_emergency(transcript: str) -> EmergencyDetection | None:
     """Return the first emergency keyword match, or None.
 
@@ -314,6 +350,27 @@ def detect_emergency(transcript: str) -> EmergencyDetection | None:
     if not transcript:
         return None
     for kw in EMERGENCY_KEYWORDS:
+        for pat in kw.patterns:
+            m = re.search(pat, transcript, re.IGNORECASE)
+            if m:
+                return EmergencyDetection(
+                    label=kw.label,
+                    severity=kw.severity,
+                    matched_phrase=m.group(0),
+                )
+    return None
+
+
+def detect_safety_escalation(transcript: str) -> EmergencyDetection | None:
+    """Return ESI-2 safety keyword match, or None.
+
+    These are checked BEFORE the LLM processes the transcript. If any match,
+    the system auto-escalates to at least ESI-2 regardless of LLM output.
+    This is the hardcoded safety net — AI is not trusted alone for these.
+    """
+    if not transcript:
+        return None
+    for kw in SAFETY_KEYWORDS_ESI2:
         for pat in kw.patterns:
             m = re.search(pat, transcript, re.IGNORECASE)
             if m:
@@ -346,6 +403,8 @@ class ConcordanceFlag:
     # True if these flags were evaluated under the lowered thresholds
     # because risk factors were present.
     risk_aware: bool = False
+    # True if the same flag fired multiple times (patient repeats complaint).
+    repeated: bool = False
 
 
 class ConcordanceEngine:
@@ -373,13 +432,28 @@ class ConcordanceEngine:
     def find_tier4(self, transcript: str) -> list[str]:
         return [m.group(0) for p in self._tier4 for m in p.finditer(transcript)]
 
+    def biomarkers_all_zero(self, snapshot: dict) -> bool:
+        """Detect when Thymia returned all-zero scores (silent failure).
+        All zeros means the API likely failed — don't display as 'all clear'."""
+        helios = snapshot.get("helios", {}) or {}
+        if not helios:
+            return True
+        return all(v == 0.0 for v in helios.values() if isinstance(v, (int, float)))
+
     def biomarker_elevated(self, snapshot: dict) -> tuple[bool, list[str]]:
         """Return (elevated?, list of human-readable signal descriptions).
 
         Reads the Helios shape returned by ThymiaService:
           { stress, distress, exhaustion, sleepPropensity, lowSelfEsteem, mentalStrain }
         Apollo / CVD blocks are still inspected if a future caller adds them.
+
+        If all biomarker values are 0.0, Thymia may have failed silently —
+        return not-elevated so no false-negative "all clear" is displayed.
         """
+        if self.biomarkers_all_zero(snapshot):
+            log.warning("All biomarker values are 0.0 — possible Thymia silent failure")
+            return (False, [])
+
         signals: list[str] = []
         helios = snapshot.get("helios", {}) or {}
         apollo = snapshot.get("apollo", {}) or {}
@@ -478,7 +552,25 @@ class ConcordanceEngine:
                     )
                 )
 
-        return flags
+        # Deduplicate: same triage_label firing multiple times (patient repeats
+        # complaint) → keep one flag, mark as repeated.
+        return self._deduplicate_flags(flags)
+
+    @staticmethod
+    def _deduplicate_flags(flags: list[ConcordanceFlag]) -> list[ConcordanceFlag]:
+        """Deduplicate flags with the same triage_label. Keep highest-tier
+        (lowest number) instance, aggregate matches, mark as repeated."""
+        seen: dict[str, ConcordanceFlag] = {}
+        for f in flags:
+            key = f.triage_label
+            if key in seen:
+                existing = seen[key]
+                existing.matches.extend(f.matches)
+                existing.repeated = True
+            else:
+                f.repeated = False
+                seen[key] = f
+        return list(seen.values())
 
 
 def expand_abbreviations(text: str, mapping: dict[str, str] = ABBREV_MAP) -> str:

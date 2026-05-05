@@ -1,0 +1,38 @@
+# Things that shouldn't enter the Docker build context.
+# Keeps the build fast and prevents secrets / pre-built junk from baking in.
+
+# Secrets — Railway injects env vars at runtime; never bake them into image.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Python artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.venv/
+**/venv/
+**/.pytest_cache/
+**/.mypy_cache/
+
+# Node artifacts (Stage 1 reinstalls fresh; never copy host node_modules).
+**/node_modules/
+**/.vite/
+
+# Pre-built frontend output — Stage 1 produces this fresh.
+frontend/dist/
+
+# IDE / OS junk
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# Local-only
+uploads/
+*.log

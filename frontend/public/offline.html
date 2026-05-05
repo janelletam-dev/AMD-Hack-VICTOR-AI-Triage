@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>V.I.C.T.O.R. — Temporarily Unavailable</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #0c1324;
+      color: #e8eaf0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      padding: 24px;
+      text-align: center;
+    }
+    .container {
+      max-width: 520px;
+      width: 100%;
+    }
+    .icon {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: rgba(47, 217, 244, 0.1);
+      border: 1px solid rgba(47, 217, 244, 0.2);
+      display: grid;
+      place-items: center;
+      margin: 0 auto 24px;
+      font-size: 32px;
+      color: #2fd9f4;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+      color: #2fd9f4;
+    }
+    p {
+      font-size: 16px;
+      line-height: 1.6;
+      color: #a0a4b0;
+      margin-bottom: 16px;
+    }
+    .action {
+      margin-top: 32px;
+      padding: 16px 24px;
+      border-radius: 16px;
+      background: rgba(47, 217, 244, 0.06);
+      border: 1px solid rgba(47, 217, 244, 0.18);
+    }
+    .action p {
+      color: #e8eaf0;
+      font-size: 15px;
+      font-weight: 500;
+      margin: 0;
+    }
+    .status {
+      margin-top: 32px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: #64666e;
+    }
+    .retry-btn {
+      margin-top: 24px;
+      padding: 12px 32px;
+      border-radius: 999px;
+      background: linear-gradient(to right, #2fd9f4, #008ea1);
+      color: #0c1324;
+      font-weight: 700;
+      font-size: 14px;
+      border: none;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .retry-btn:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">!</div>
+    <h1>V.I.C.T.O.R. is temporarily unavailable.</h1>
+    <p>
+      Our system is experiencing a brief interruption.
+      Please proceed to the triage desk for assistance.
+    </p>
+    <div class="action">
+      <p>A nurse at the front desk can help you right away.</p>
+    </div>
+    <button class="retry-btn" onclick="window.location.reload()">
+      Try Again
+    </button>
+    <div class="status">V.I.C.T.O.R. Core — Service Interruption</div>
+  </div>
+</body>
+</html>

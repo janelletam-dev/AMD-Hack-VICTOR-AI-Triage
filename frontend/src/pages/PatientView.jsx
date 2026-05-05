@@ -107,7 +107,7 @@ const NAME_STOP_WORDS = new Set([
 ]);
 
 function parseName(raw) {
-  if (!raw) return { ok: false, message: "I didn't catch a name." };
+  if (!raw) return { ok: false, message: "I didn’t catch a name." };
 
   // Normalize: punctuation → space, collapse whitespace.
   let cleaned = raw
@@ -124,11 +124,11 @@ function parseName(raw) {
   } while (cleaned !== prev);
 
   // Walk tokens left-to-right. Keep name-shaped ones, stop at a stop word
-  // or anything that doesn't look like part of a name.
-  const isNameWord = (t) => /^[A-Za-zÀ-ÿ'’\-]{2,}$/.test(t);
+  // or anything that doesn’t look like part of a name.
+  const isNameWord = (t) => /^[A-Za-zÀ-ÿ’’\-]{2,}$/.test(t);
   const nameTokens = [];
   for (const tok of cleaned.split(" ")) {
-    const lower = tok.toLowerCase().replace(/'/g, "");
+    const lower = tok.toLowerCase().replace(/’/g, "");
     if (NAME_STOP_WORDS.has(lower)) break;
     if (!isNameWord(tok)) continue;
     nameTokens.push(tok);
@@ -139,8 +139,10 @@ function parseName(raw) {
   // first+last requirement, and "Janelle Tamayo Janelle Tamayo" passes as
   // "Janelle Tamayo".
   const deduped = dedupeRepeatedSequence(nameTokens);
-  if (deduped.length < 2) {
-    return { ok: false, message: "I need both your first and last name." };
+  // Accept single-word nicknames — patients may give a nickname instead of
+  // their legal name, and that’s fine for triage purposes.
+  if (deduped.length < 1) {
+    return { ok: false, message: "I didn’t catch a name." };
   }
   const titled = deduped.map(
     (t) => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
@@ -262,8 +264,29 @@ function formatYMD(y, m, d) {
   return `${months[m - 1]} ${d}, ${y}`;
 }
 
+// Patterns for patient refusing DOB or giving age instead.
+const DOB_REFUSAL = /\b(i\s+don'?t\s+(want|wish)\s+to|i'?d?\s+rather\s+not|no\s+thank|skip|pass|prefer\s+not|not\s+giving|refuse)\b/i;
+const AGE_PATTERN = /\b(?:i'?m|i\s+am|age)?\s*(\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.?o\.?)?\b/i;
+const AGE_SPOKEN = /\b(?:i'?m|i\s+am)\s+(\d{1,3})\b/i;
+
 function parseDOB(raw) {
   if (!raw) return { ok: false, message: "I didn't catch a date." };
+
+  // Patient refuses to give DOB → accept as "Not provided".
+  if (DOB_REFUSAL.test(raw)) {
+    return { ok: true, value: "Not provided", skipped: true };
+  }
+
+  // Patient gives age instead of DOB ("I'm 54") → calculate approximate year.
+  const ageMatch = raw.match(AGE_PATTERN) || raw.match(AGE_SPOKEN);
+  if (ageMatch) {
+    const age = parseInt(ageMatch[1], 10);
+    if (age > 0 && age <= 120) {
+      const approxYear = new Date().getFullYear() - age;
+      return { ok: true, value: `~${approxYear} (age ${age})`, fromAge: true, age };
+    }
+  }
+
   // First convert spoken digits ("nineteen ninety" → "1990") so the rest
   // of the parser only sees numbers.
   const normalized = wordsToNumbers(raw);
@@ -308,6 +331,18 @@ function parseDOB(raw) {
   return { ok: false, message: "I didn't get a valid date — please say it like January 15, 1980." };
 }
 
+function isMinorFromDOB(dobValue) {
+  if (!dobValue || dobValue === "Not provided") return false;
+  const ageMatch = dobValue.match(/age\s+(\d+)/);
+  if (ageMatch) return parseInt(ageMatch[1], 10) < 18;
+  const yearMatch = dobValue.match(/\b(19\d{2}|20\d{2})\b/);
+  if (yearMatch) {
+    const age = new Date().getFullYear() - parseInt(yearMatch[1], 10);
+    return age < 18;
+  }
+  return false;
+}
+
 export default function PatientView() {
   const [step, setStep] = useState("welcome");
   const [voice, setVoice] = useState(null);
@@ -328,6 +363,9 @@ export default function PatientView() {
   const [triageComplete, setTriageComplete] = useState(false);
   // Patient-safety: triage_emergency event payload, when fired.
   const [emergency, setEmergency] = useState(null);  // { label, severity, matched_phrase }
+  // Noisy environment: track consecutive low-confidence events.
+  const [noisyEnvironment, setNoisyEnvironment] = useState(false);
+  const lowConfCountRef = useRef(0);
   const phase = PHASES[phaseIdx];
 
   const wsUrl = useMemo(
@@ -350,6 +388,16 @@ export default function PatientView() {
   const micStopRef = useRef(null);
 
   const onEvent = useCallback((evt) => {
+    // Track low-confidence events for noisy environment detection.
+    if (evt.type === "jackie_turn" && evt.data?.low_confidence) {
+      lowConfCountRef.current += 1;
+      if (lowConfCountRef.current >= 2) setNoisyEnvironment(true);
+    } else if (evt.type === "transcript" && evt.data?.is_final) {
+      // Good transcript → reset the noisy counter.
+      lowConfCountRef.current = 0;
+      setNoisyEnvironment(false);
+    }
+
     // J.A.C.K.I.E. follow-up turn → play TTS, then auto-restart the mic
     // when TTS finishes so the patient can answer hands-free.
     if (evt.type === "jackie_turn" && evt.data?.text) {
@@ -448,9 +496,6 @@ export default function PatientView() {
 
   const playTTS = useCallback((text, onEnded) => {
     if (!text || !voice) {
-      // Even with no audio, still let the caller know "we're done speaking"
-      // so the conversation loop can advance. The patient will see the text
-      // on screen instead.
       if (typeof onEnded === "function") setTimeout(onEnded, 100);
       return;
     }
@@ -459,20 +504,61 @@ export default function PatientView() {
       audioRef.current = null;
     }
     const url = `${HTTP_BASE}/api/tts?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
-    const audio = new Audio(url);
-    audioRef.current = audio;
+
+    // Try fetching — if server returns fallback JSON, use Web Speech API.
+    fetch(url).then(async (res) => {
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json") || res.headers.get("X-TTS-Fallback")) {
+        // ElevenLabs unavailable — fall back to browser Web Speech API.
+        speakWithWebSpeechAPI(text, onEnded);
+        return;
+      }
+      // Normal audio stream — play as before.
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const audio = new Audio(blobUrl);
+      audioRef.current = audio;
+      setTtsState("speaking");
+      let settled = false;
+      const finish = (status) => {
+        if (settled) return;
+        settled = true;
+        setTtsState(status);
+        URL.revokeObjectURL(blobUrl);
+        if (typeof onEnded === "function") onEnded();
+      };
+      audio.addEventListener("ended", () => finish("done"));
+      audio.addEventListener("error", () => finish("error"));
+      audio.play().catch(() => finish("error"));
+    }).catch(() => {
+      // Network error — fall back to Web Speech API.
+      speakWithWebSpeechAPI(text, onEnded);
+    });
+  }, [voice]);
+
+  const speakWithWebSpeechAPI = useCallback((text, onEnded) => {
     setTtsState("speaking");
-    let settled = false;
-    const finish = (status) => {
-      if (settled) return;
-      settled = true;
-      setTtsState(status);
+    if (!window.speechSynthesis) {
+      // No Web Speech API either — just show text, advance after delay.
+      setTimeout(() => {
+        setTtsState("done");
+        if (typeof onEnded === "function") onEnded();
+      }, Math.min(text.length * 50, 3000));
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.95;
+    utterance.pitch = 1.0;
+    utterance.onend = () => {
+      setTtsState("done");
       if (typeof onEnded === "function") onEnded();
     };
-    audio.addEventListener("ended", () => finish("done"));
-    audio.addEventListener("error", () => finish("error"));
-    audio.play().catch(() => finish("error"));
-  }, [voice]);
+    utterance.onerror = () => {
+      setTtsState("error");
+      if (typeof onEnded === "function") onEnded();
+    };
+    window.speechSynthesis.speak(utterance);
+  }, []);
 
   // Late-bind so onEvent (registered with useWebSocket once) always uses
   // the current versions of these callbacks.
@@ -555,8 +641,19 @@ export default function PatientView() {
         return;
       }
       setParseError("");
-      setConfirm({ phase: "dob", value: r.value });
-      playTTS(confirmTTS(voice, "dob", r.value));
+      // DOB was skipped by patient refusal — accept and move on.
+      if (r.skipped) {
+        setConfirm({ phase: "dob", value: r.value });
+        playTTS("That's okay — we'll skip that. Let's move on.");
+      } else if (r.fromAge) {
+        // Patient gave age instead of DOB — accept approximate year.
+        setConfirm({ phase: "dob", value: r.value });
+        const confirmMsg = `I have you as approximately ${r.age} years old — is that right?`;
+        playTTS(confirmMsg);
+      } else {
+        setConfirm({ phase: "dob", value: r.value });
+        playTTS(confirmTTS(voice, "dob", r.value));
+      }
     } else {
       // complaint — keep the text as-is, no confirmation required
       setAnswers((a) => ({ ...a, complaint: captured }));
@@ -567,9 +664,14 @@ export default function PatientView() {
     if (!confirm) return;
     setAnswers((a) => ({ ...a, [confirm.phase]: confirm.value }));
     setStoreIdentity({ [confirm.phase]: confirm.value });
+    const identityData = { [confirm.phase]: confirm.value };
+    // Detect minor patients after DOB confirmation.
+    if (confirm.phase === "dob" && isMinorFromDOB(confirm.value)) {
+      identityData.is_minor = true;
+    }
     send && send({
       type: "identity_update",
-      data: { [confirm.phase]: confirm.value },
+      data: identityData,
     });
     setConfirm(null);
     setParseError("");
@@ -588,6 +690,31 @@ export default function PatientView() {
     lastFinalRef.current = "";
     setAnswers((a) => ({ ...a, [phase]: "" }));
     playTTS(phaseRetryTTS(voice, phase));
+  }, [phase, voice, playTTS]);
+
+  // Text input fallback — when mic is blocked, patient types instead.
+  // Simulates a transcript event so the same parsing/confirm flow runs.
+  const handleTextSubmit = useCallback((text) => {
+    phaseTextRef.current = text;
+    lastFinalRef.current = text;
+    setInterimText(text);
+    setAnswers((a) => ({ ...a, [phase]: text }));
+    // For name/dob phases, trigger the same parse+confirm flow.
+    if (phase === "name") {
+      const r = parseName(text);
+      if (!r.ok) { setParseError(r.message); return; }
+      setParseError("");
+      setConfirm({ phase: "name", value: r.value });
+      playTTS(confirmTTS(voice, "name", r.value));
+    } else if (phase === "dob") {
+      const r = parseDOB(text);
+      if (!r.ok) { setParseError(r.message); return; }
+      setParseError("");
+      setConfirm({ phase: "dob", value: r.value });
+      if (r.skipped) playTTS("That's okay — we'll skip that.");
+      else playTTS(confirmTTS(voice, "dob", r.value));
+    }
+    // For complaint/conversation, the text is just captured.
   }, [phase, voice, playTTS]);
 
   const advancePhase = useCallback(() => {
@@ -642,11 +769,13 @@ export default function PatientView() {
             parseError={parseError}
             jackieTurn={jackieTurn}
             framesSent={framesSent}
+            noisy={noisyEnvironment}
             onStart={start}
             onStopMic={handleStopMic}
             onAdvance={advancePhase}
             onConfirmYes={onConfirmYes}
             onConfirmRetry={onConfirmRetry}
+            onTextSubmit={handleTextSubmit}
           />
         )}
         {step === "done" && <Done room={room} answers={answers} />}
@@ -813,7 +942,8 @@ function PrivacyNote({ style }) {
 function Interview({
   voice, wsStatus, ttsState, micState,
   phase, phaseIdx, answers, interimText, confirm, parseError, jackieTurn,
-  framesSent, onStart, onStopMic, onAdvance, onConfirmYes, onConfirmRetry,
+  framesSent, noisy, onStart, onStopMic, onAdvance, onConfirmYes, onConfirmRetry,
+  onTextSubmit,
 }) {
   const recording = micState === "recording";
   const error = micState === "error";
@@ -880,9 +1010,9 @@ function Interview({
         <MicCircle recording={recording} error={error} onClick={recording ? onStopMic : onStart} />
       )}
 
-      <StatusPill recording={recording} error={error} ttsState={ttsState} wsStatus={wsStatus} />
+      <StatusPill recording={recording} error={error} ttsState={ttsState} wsStatus={wsStatus} noisy={noisy} />
 
-      {error && <MicErrorHelp onRetry={onStart} />}
+      {error && <MicErrorHelp onRetry={onStart} onTextSubmit={onTextSubmit} phase={phase} />}
 
       {isConfirming ? (
         <ConfirmCard confirm={confirm} onYes={onConfirmYes} onRetry={onConfirmRetry} />
@@ -1004,7 +1134,14 @@ function MicCircle({ recording, error, onClick }) {
   );
 }
 
-function MicErrorHelp({ onRetry }) {
+function MicErrorHelp({ onRetry, onTextSubmit, phase }) {
+  const [textInput, setTextInput] = useState("");
+  const placeholders = {
+    name: "Type your full name here...",
+    dob: "Type your date of birth (e.g. January 15, 1980)...",
+    complaint: "Describe your symptoms here...",
+    conversation: "Type your answer here...",
+  };
   return (
     <div style={{
       maxWidth: 520, padding: "16px 20px", borderRadius: 12,
@@ -1014,32 +1151,72 @@ function MicErrorHelp({ onRetry }) {
       display: "flex", flexDirection: "column", gap: 12,
     }}>
       <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-        We couldn't access your microphone. Click the lock or camera icon
-        in your browser's address bar and allow microphone access for this site,
-        then try again.
+        We couldn't access your microphone. You can either allow microphone
+        access in your browser settings, or type your response below.
       </div>
-      <button
-        onClick={onRetry}
-        style={{
-          padding: "8px 16px", borderRadius: 999,
-          background: "var(--vic-error)", color: "var(--vic-error-bg)",
-          border: "none", cursor: "pointer", alignSelf: "flex-start",
-          fontWeight: 700, fontSize: 12,
-          textTransform: "uppercase", letterSpacing: "0.1em",
-        }}
-      >
-        Try again
-      </button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onRetry}
+          style={{
+            padding: "8px 16px", borderRadius: 999,
+            background: "var(--vic-error)", color: "var(--vic-error-bg)",
+            border: "none", cursor: "pointer",
+            fontWeight: 700, fontSize: 12,
+            textTransform: "uppercase", letterSpacing: "0.1em",
+          }}
+        >
+          Try mic again
+        </button>
+      </div>
+      <div style={{
+        display: "flex", gap: 8, marginTop: 8,
+        borderTop: "1px solid rgba(255, 180, 171, 0.15)", paddingTop: 12,
+      }}>
+        <input
+          type="text"
+          value={textInput}
+          onChange={(e) => setTextInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && textInput.trim()) {
+              onTextSubmit(textInput.trim());
+              setTextInput("");
+            }
+          }}
+          placeholder={placeholders[phase] || "Type here..."}
+          style={{
+            flex: 1, padding: "10px 14px", borderRadius: 12,
+            background: "rgba(21, 27, 45, 0.8)",
+            border: "1px solid rgba(47, 217, 244, 0.3)",
+            color: "var(--vic-on-surface)", fontSize: 14,
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={() => { if (textInput.trim()) { onTextSubmit(textInput.trim()); setTextInput(""); } }}
+          disabled={!textInput.trim()}
+          style={{
+            padding: "10px 18px", borderRadius: 12,
+            background: textInput.trim() ? "var(--vic-primary)" : "var(--vic-bg-highest)",
+            color: textInput.trim() ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
+            border: "none", cursor: textInput.trim() ? "pointer" : "not-allowed",
+            fontWeight: 700, fontSize: 13,
+          }}
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 }
 
-function StatusPill({ recording, error, ttsState, wsStatus }) {
+function StatusPill({ recording, error, ttsState, wsStatus, noisy }) {
   let label, color;
   if (error) { label = "Microphone permission denied"; color = "var(--vic-error)"; }
+  else if (noisy) { label = "It's quite loud — lean closer and speak clearly"; color = "var(--vic-secondary)"; }
   else if (recording) { label = "Listening Now..."; color = "var(--vic-primary)"; }
   else if (ttsState === "speaking") { label = "Speaking..."; color = "var(--vic-primary)"; }
   else if (wsStatus === "open") { label = "Ready — tap to speak"; color = "var(--vic-primary)"; }
+  else if (wsStatus === "closed" || wsStatus === "error") { label = "Reconnecting..."; color = "var(--vic-secondary)"; }
   else { label = `Connecting (${wsStatus})…`; color = "var(--vic-on-surface-variant)"; }
 
   return (

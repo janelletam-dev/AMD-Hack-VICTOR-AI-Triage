@@ -45,7 +45,7 @@ export default function SOAPCard({ soap, vitals, demographics }) {
         padding: 28, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28,
       }}>
         <Section label="Subjective" border="rgba(47, 217, 244, 0.3)">
-          <p style={panelText}>{soap?.subjective || empty}</p>
+          <SubjectiveText text={soap?.subjective} />
         </Section>
 
         <Section label="Assessment" border="var(--vic-error)" bg="rgba(255, 180, 171, 0.05)">
@@ -74,6 +74,27 @@ export default function SOAPCard({ soap, vitals, demographics }) {
         </Section>
       </div>
     </section>
+  );
+}
+
+const MAX_SUBJECTIVE_CHARS = 600;
+
+function SubjectiveText({ text }) {
+  if (!text) return <p style={panelText}>{empty}</p>;
+  const capped = text.length > MAX_SUBJECTIVE_CHARS;
+  const display = capped ? text.slice(0, MAX_SUBJECTIVE_CHARS) + "…" : text;
+  return (
+    <div>
+      <p style={{ ...panelText, maxHeight: 180, overflowY: "auto" }}>{display}</p>
+      {capped && (
+        <div style={{
+          fontSize: 10, color: "var(--vic-on-surface-variant)",
+          fontStyle: "italic", marginTop: 4,
+        }}>
+          Summarised by S.C.R.I.B.E. — full transcript available in session log
+        </div>
+      )}
+    </div>
   );
 }
 

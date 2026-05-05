@@ -210,4 +210,5 @@ class VictorAgent:
             "gloss_seed": f.gloss_seed,
             "risk_factors": list(f.risk_factors),
             "risk_aware": f.risk_aware,
+            "repeated": f.repeated,
         }

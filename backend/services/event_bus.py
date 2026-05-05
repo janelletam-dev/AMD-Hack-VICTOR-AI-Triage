@@ -12,6 +12,8 @@ import asyncio
 from collections import defaultdict
 from typing import Any
 
+from services.session_log_store import store as session_log_store
+
 
 class EventBus:
     def __init__(self) -> None:
@@ -28,6 +30,10 @@ class EventBus:
             del self._rooms[room]
 
     async def publish(self, room: str, event: dict[str, Any]) -> None:
+        # Mirror into the per-room session log first so the report can be
+        # generated even if no clinician is currently subscribed.
+        session_log_store.ingest(room, event)
+
         for q in list(self._rooms.get(room, ())):
             try:
                 q.put_nowait(event)
@@ -38,6 +44,12 @@ class EventBus:
                 except asyncio.QueueEmpty:
                     pass
                 q.put_nowait(event)
+
+    async def broadcast_all(self, event: dict[str, Any]) -> None:
+        """Publish an event to ALL active rooms. Used for ESI-1 urgent alerts
+        that must appear on every clinician dashboard."""
+        for room in list(self._rooms.keys()):
+            await self.publish(room, event)
 
 
 bus = EventBus()

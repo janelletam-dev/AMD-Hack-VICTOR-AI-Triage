@@ -19,7 +19,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from agents import swarm
 from config import settings
 from engine.concordance import engine as concordance_engine
-from engine.concordance import detect_emergency
+from engine.concordance import detect_emergency, detect_safety_escalation
 from services.deepgram_service import DeepgramService, Transcript
 from services.event_bus import bus
 from services.thymia_service import (
@@ -113,8 +113,73 @@ async def audio_ws(
     }
 
     state["emergency_fired"] = False
+    state["safety_escalated"] = False
+    state["last_audio_time"] = time.time()
+    state["silence_warned"] = False
+    state["session_abandoned"] = False
+
+    async def check_silence() -> None:
+        """Monitor for patient silence. After 60s of no audio, prompt.
+        After 3 minutes total silence, mark session as abandoned."""
+        while True:
+            await asyncio.sleep(10)
+            if state["session_abandoned"] or state["emergency_fired"]:
+                return
+            if state["phase"] not in ("complaint", "conversation"):
+                continue
+            elapsed = time.time() - state["last_audio_time"]
+            if elapsed >= 180 and not state["session_abandoned"]:
+                state["session_abandoned"] = True
+                await bus.publish(room, {
+                    "type": "session_status",
+                    "data": {
+                        "status": "abandoned",
+                        "reason": "Patient silence exceeded 3 minutes",
+                        "session_id": session_id,
+                    },
+                })
+                return
+            if elapsed >= 60 and not state["silence_warned"]:
+                state["silence_warned"] = True
+                silence_prompt = (
+                    "It seems like you've stepped away. "
+                    "I'll be here when you're ready."
+                )
+                await bus.publish(room, {
+                    "type": "jackie_turn",
+                    "data": {
+                        "text": silence_prompt,
+                        "turn": state["jackie_turn_count"],
+                        "max_turns": state["jackie_max_turns"],
+                        "language": state["helios_lang"].split("-")[0],
+                        "silence_prompt": True,
+                    },
+                })
+
+    # Confidence threshold below which we ask the patient to repeat.
+    LOW_CONFIDENCE_THRESHOLD = 0.5
 
     async def on_transcript(t: Transcript) -> None:
+        # Low confidence from Deepgram (noisy ER environment) → ask patient to repeat.
+        if (
+            t.is_final
+            and t.text
+            and t.confidence < LOW_CONFIDENCE_THRESHOLD
+            and state["phase"] in ("complaint", "conversation")
+            and not state["emergency_fired"]
+        ):
+            await bus.publish(room, {
+                "type": "jackie_turn",
+                "data": {
+                    "text": "I didn't quite catch that. Could you say that again?",
+                    "turn": state["jackie_turn_count"],
+                    "max_turns": state["jackie_max_turns"],
+                    "language": state["helios_lang"].split("-")[0],
+                    "low_confidence": True,
+                },
+            })
+            return
+
         # Track the most recent finalised transcript for concordance + remember
         # detected language for Helios.
         if t.is_final and t.text:
@@ -124,6 +189,36 @@ async def audio_ws(
             state["helios_lang"] = (
                 t.language if "-" in t.language else f"{t.language}-US"
             )
+
+        # Unsupported language detection: if Deepgram detects a language we
+        # don't support, tell the patient which languages work.
+        SUPPORTED_LANGUAGES = {"en", "es", "fr", "de", "pt", "hi", "it", "th"}
+        if (
+            t.is_final
+            and t.language
+            and t.language not in SUPPORTED_LANGUAGES
+            and t.language != "multi"
+            and not state.get("unsupported_lang_warned")
+        ):
+            state["unsupported_lang_warned"] = True
+            lang_msg = (
+                "I want to make sure I understand you correctly. "
+                "We currently support English, Spanish, French, German, "
+                "Portuguese, Hindi, Italian, and Thai. "
+                "Would any of those work for you?"
+            )
+            await bus.publish(room, {
+                "type": "jackie_turn",
+                "data": {
+                    "text": lang_msg,
+                    "turn": state["jackie_turn_count"],
+                    "max_turns": state["jackie_max_turns"],
+                    "language": "en",
+                    "unsupported_language": True,
+                    "detected_language": t.language,
+                },
+            })
+
         await bus.publish(
             room,
             {
@@ -146,6 +241,16 @@ async def audio_ws(
                 asyncio.create_task(handle_emergency(em, t.text, t.language or "en"))
                 return  # don't run normal J.A.C.K.I.E. flow on this turn
 
+        # ESI-2 safety net: hardcoded keyword check BEFORE the LLM.
+        # "chest pain", "can't breathe", "heart attack", etc. auto-escalate
+        # to ESI-2 regardless of what the LLM thinks. Never rely solely on
+        # AI for life-threatening keywords.
+        if t.is_final and t.text and not state["emergency_fired"] and not state.get("safety_escalated"):
+            safety = detect_safety_escalation(t.text)
+            if safety is not None:
+                state["safety_escalated"] = True
+                asyncio.create_task(handle_safety_escalation(safety, t.text, t.language or "en"))
+
         # During the J.A.C.K.I.E. follow-up loop, every finalised patient
         # utterance triggers the next turn.
         if (
@@ -162,25 +267,30 @@ async def audio_ws(
         """Patient said an explicit emergency phrase. Force ESI-1, emit a
         critical alert, and tell the patient (calmly) to stay put.
         """
-        log.warning(
-            "session=%s EMERGENCY detected: %s — phrase=%r",
-            session_id, em.label, em.matched_phrase,
-        )
-        # 1. Critical event for the clinician dashboard.
-        await bus.publish(
-            room,
-            {
-                "type": "triage_emergency",
-                "data": {
-                    "label": em.label,
-                    "severity": em.severity,
-                    "matched_phrase": em.matched_phrase,
-                    "trigger_utterance": utterance,
-                    "language": language,
-                    "agent": "V.I.C.T.O.R.",
-                },
+        # Log only the category label — never the exact phrase. Patient-spoken
+        # health information is PHI and should not appear in plaintext logs.
+        # The full transcript still flows to the clinician dashboard via the
+        # event bus, where it's visible to authorised clinicians only.
+        log.warning("session=%s EMERGENCY detected: %s", session_id, em.label)
+        # 1. Critical event for the clinician dashboard — broadcast to ALL
+        # rooms when ESI-1, not just the assigned nurse.
+        emergency_payload = {
+            "type": "triage_emergency",
+            "data": {
+                "label": em.label,
+                "severity": em.severity,
+                "matched_phrase": em.matched_phrase,
+                "trigger_utterance": utterance,
+                "language": language,
+                "agent": "V.I.C.T.O.R.",
+                "source_room": room,
+                "session_id": session_id,
             },
-        )
+        }
+        if em.severity == "ESI-1":
+            await bus.broadcast_all(emergency_payload)
+        else:
+            await bus.publish(room, emergency_payload)
         # 2. Force ESI 1 — bypasses the normal concordance pipeline.
         await bus.publish(
             room,
@@ -220,6 +330,44 @@ async def audio_ws(
             room,
             {"type": "triage_complete", "data": {"reason": f"emergency:{em.label}"}},
         )
+
+    async def handle_safety_escalation(safety, utterance: str, language: str) -> None:
+        """Hardcoded ESI-2 safety escalation. Does NOT abort triage — the
+        interview continues, but the clinician gets an immediate alert and
+        ESI is forced to at most 2. This runs BEFORE the LLM has any say."""
+        # Log only the category label — see PHI note above on handle_emergency.
+        log.warning("session=%s SAFETY ESCALATION: %s", session_id, safety.label)
+        state["escalated"] = True
+        await bus.publish(room, {
+            "type": "safety_escalation",
+            "data": {
+                "label": safety.label,
+                "severity": safety.severity,
+                "matched_phrase": safety.matched_phrase,
+                "trigger_utterance": utterance,
+                "language": language,
+                "agent": "V.I.C.T.O.R.",
+                "source_room": room,
+                "session_id": session_id,
+                "note": (
+                    "Auto-escalated to ESI-2 by hardcoded keyword detection. "
+                    "LLM assessment not required for this decision."
+                ),
+            },
+        })
+        await bus.publish(room, {
+            "type": "esi_update",
+            "data": {
+                "standard_esi": 3,
+                "victor_esi": 2,
+                "adjustment_reason": (
+                    f"Safety keyword ({safety.label}): patient said "
+                    f"{safety.matched_phrase!r}. Auto-escalated — no AI required."
+                ),
+                "agent": "V.I.C.T.O.R.",
+                "hardcoded": True,
+            },
+        })
 
     on_transcript_holder["fn"] = on_transcript
 
@@ -302,6 +450,7 @@ async def audio_ws(
     bytes_received = 0
     heartbeat_task = asyncio.create_task(_heartbeat(ws, session_id))
     relay_task = asyncio.create_task(_relay_events(ws, event_queue))
+    silence_task = asyncio.create_task(check_silence())
     helios_tasks: list[asyncio.Task] = []
 
     async def submit_helios_and_evaluate() -> None:
@@ -342,15 +491,45 @@ async def audio_ws(
             language=state["helios_lang"],
         )
         if not result:
+            # Thymia API timeout or error — continue triage without biomarkers.
+            # Concordance engine skips biomarker gating, uses transcript-only.
+            log.warning("session=%s thymia returned no result — continuing without biomarkers", session_id)
+            await bus.publish(room, {
+                "type": "biomarker_unavailable",
+                "data": {
+                    "reason": "Voice biomarkers unavailable for this session",
+                    "detail": "Thymia API timeout or error. Triage continues with transcript-only analysis.",
+                    "session_id": session_id,
+                },
+            })
+            # Still run concordance on transcript alone (no biomarker gating).
+            await swarm.victor.on_concordance_evaluation(
+                room=room,
+                flags=[],
+                transcript=state["latest_final_transcript"],
+                biomarkers={},
+                chief_complaint_label=None,
+            )
             return
 
-        await bus.publish(room, {"type": "biomarker", "data": result.to_event()})
+        event_data = result.to_event()
+        helios_block = event_data.get("helios", {})
+
+        # Detect Thymia silent failure: all biomarker values are 0.0.
+        if concordance_engine.biomarkers_all_zero({"helios": helios_block}):
+            log.warning("session=%s all biomarker values are 0.0 — Thymia may have failed silently", session_id)
+            await bus.publish(room, {
+                "type": "biomarker_unavailable",
+                "data": {"reason": "All biomarker values returned as zero — data may be unavailable"},
+            })
+            return
+
+        await bus.publish(room, {"type": "biomarker", "data": event_data})
 
         # Run the concordance engine, then hand off to V.I.C.T.O.R. The
         # orchestrator publishes concordance_flag (with M.E.R.C.E.D. gloss),
         # esi_update, and soap_update events — and emits agent_activity for
         # the swarm panel along the way.
-        helios_block = result.to_event()["helios"]
         flags = concordance_engine.evaluate(
             state["latest_final_transcript"], {"helios": helios_block}
         )
@@ -384,6 +563,10 @@ async def audio_ws(
                         len(data),
                         settings.frame_bytes,
                     )
+
+                # Reset silence timer on any audio received.
+                state["last_audio_time"] = time.time()
+                state["silence_warned"] = False
 
                 if dg_started:
                     dg.send(data)
@@ -438,13 +621,26 @@ async def audio_ws(
                         ))
 
                 # Capture the confirmed DOB from identity_update so Helios
-                # can include it on the model run.
+                # can include it on the model run. Also detect minor patients.
                 if ptype == "identity_update":
-                    dob = (payload.get("data") or {}).get("dob")
+                    id_data = payload.get("data") or {}
+                    dob = id_data.get("dob")
                     if dob:
                         iso = dob_to_iso(dob)
                         if iso:
                             state["dob_iso"] = iso
+                    if id_data.get("is_minor"):
+                        state["is_minor"] = True
+                    # Non-verbal patient: skip voice triage entirely.
+                    if id_data.get("non_verbal"):
+                        await bus.publish(room, {
+                            "type": "session_status",
+                            "data": {
+                                "status": "non_verbal",
+                                "reason": "Non-verbal patient — manual triage required",
+                                "session_id": session_id,
+                            },
+                        })
 
     except WebSocketDisconnect:
         pass
@@ -453,6 +649,19 @@ async def audio_ws(
     finally:
         heartbeat_task.cancel()
         relay_task.cancel()
+        silence_task.cancel()
+        # Browser tab closed mid-triage → notify clinician dashboard.
+        if not state["session_abandoned"] and state["phase"] in ("complaint", "conversation"):
+            await bus.publish(room, {
+                "type": "session_status",
+                "data": {
+                    "status": "interrupted",
+                    "reason": "WebSocket closed mid-triage (browser tab closed or network drop)",
+                    "session_id": session_id,
+                    "phase": state["phase"],
+                    "turns_completed": state["jackie_turn_count"],
+                },
+            })
         # If the session ended while still on the complaint phase (abrupt close),
         # fire Helios on whatever we buffered.
         if state["phase"] == "complaint" and not state["helios_submitted"]:

@@ -32,8 +32,16 @@ class TTSService:
             raise ValueError(f"voice '{voice}' has no ELEVENLABS_VOICE_* configured")
         return vid
 
+    @property
+    def available(self) -> bool:
+        return bool(self.api_key)
+
     async def stream(self, text: str, voice: VoiceName) -> AsyncIterator[bytes]:
-        """Yield MP3 chunks from ElevenLabs Flash v2.5."""
+        """Yield MP3 chunks from ElevenLabs Flash v2.5.
+
+        Raises httpx exceptions on failure so the router can fall back to
+        Web Speech API.
+        """
         if not self.api_key:
             return
         voice_id = self._voice_id(voice)

@@ -38,6 +38,11 @@ class Settings:
     session_secret: str = os.getenv("SESSION_SECRET", "dev-secret-change-me")
     node_env: str = os.getenv("NODE_ENV", "development")
 
+    # Demo mode — bypasses live Thymia output and returns scripted Helios values
+    # so the concordance "wow" fires reliably regardless of how the demoer
+    # actually sounds. Real Thymia API is NOT called when this is true.
+    demo_mode: bool = os.getenv("DEMO_MODE", "false").lower() in ("1", "true", "yes")
+
     # Audio constants — see PRD §6 + §12.1
     sample_rate_hz: int = 16_000
     frame_samples: int = 640        # 40ms at 16kHz

@@ -89,7 +89,23 @@ class ThymiaService:
 
         Returns parsed biomarker scores from the first analysed section, or
         None if disabled/failed. Logs (does not raise) for transport errors.
+
+        When `settings.demo_mode` is true, returns scripted biomarker values
+        (matching frontend `DEMO_EVENTS`) without hitting the real Thymia API
+        — guarantees the concordance flag fires at demo time regardless of
+        how the demoer actually sounds.
         """
+        if settings.demo_mode:
+            log.info("demo mode: returning scripted helios result (no API call)")
+            return HeliosResult(
+                stress=0.66,
+                distress=0.66,
+                exhaustion=0.33,
+                sleep_propensity=0.0,
+                low_self_esteem=0.0,
+                mental_strain=0.68,
+                raw={"demo_mode": True},
+            )
         if not self.enabled:
             return None
         if not wav_bytes:

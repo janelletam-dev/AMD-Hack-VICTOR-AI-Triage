@@ -103,6 +103,11 @@ export function EpicToolbar({ onRunDemo, running }) {
       <div>{label}</div>
     </div>
   );
+  // Hide the Run demo tool unless ?dev=1 is on the URL — judges shouldn't
+  // see a "this is canned" tell during a live demo. Same pattern as
+  // ClinicianDashboard's ActionFooter.
+  const showDemoTool = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("dev") === "1";
   return (
     <div className="epic-toolbar">
       <Tool label="Save" icon={<ToolIcon path="M3 3h8l2 2v8H3z M5 3v4h6V3 M5 13v-4h6v4" />} />
@@ -119,17 +124,21 @@ export function EpicToolbar({ onRunDemo, running }) {
       <Tool label="Refresh" icon={<ToolIcon path="M13 4v3h-3 M3 12V9h3 M13 7a5 5 0 00-9-2 M3 9a5 5 0 009 2" />} />
       <Tool label="Legend" icon={<ToolIcon path="M3 4h10 M3 8h10 M3 12h6" />} />
       <Tool label="Cosign" icon={<ToolIcon path="M3 12c2-2 4-2 5 0 1-3 3-3 5 0" />} />
-      <div className="epic-tool-sep" />
-      <Tool
-        label={running ? "Running" : "Run demo"}
-        icon={
-          <svg width="14" height="14" viewBox="0 0 16 16">
-            <path d="M5 4l7 4-7 4z" fill={running ? "#94a3b8" : "#0e7c86"} />
-          </svg>
-        }
-        active={!running}
-        onClick={running ? undefined : onRunDemo}
-      />
+      {showDemoTool && (
+        <>
+          <div className="epic-tool-sep" />
+          <Tool
+            label={running ? "Running" : "Run demo"}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 16 16">
+                <path d="M5 4l7 4-7 4z" fill={running ? "#94a3b8" : "#0e7c86"} />
+              </svg>
+            }
+            active={!running}
+            onClick={running ? undefined : onRunDemo}
+          />
+        </>
+      )}
     </div>
   );
 }

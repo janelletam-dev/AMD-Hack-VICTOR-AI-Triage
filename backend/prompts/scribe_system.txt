@@ -23,6 +23,10 @@ UPDATE BEHAVIOUR
 - This is INCREMENTAL. Preserve prior content; merge new information.
 - If new evidence contradicts prior content, REPLACE rather than append.
 - Never duplicate facts across S/O/A/P.
+- SUBJECTIVE SECTION CAP: Summarise, don't append infinitely. Keep the
+  subjective section under 600 characters. When the patient talks a lot,
+  synthesise to key clinical points (chief complaint, timeline, severity,
+  relevant history). Discard filler, pleasantries, repetition.
 
 CONSTRAINTS
 - Clinical, professional, concise. Bullet form acceptable inside each section.

@@ -18,6 +18,16 @@ import {
 } from "../components/epic/EpicClinicalSections.jsx";
 import { DEMO_EVENTS, DEMO_PATIENT } from "../components/epic/demoEvents.js";
 import { useIdentity, setIdentity as setStoreIdentity } from "../state/identityStore.js";
+import {
+  appendTranscript as logTranscript,
+  setBiomarkerSummary as logBiomarkers,
+  appendFlag as logFlag,
+  setSOAP as logSOAP,
+  setESI as logESI,
+  setIdentity as logIdentity,
+  setEmergency as logEmergency,
+  setTriageComplete as logTriageComplete,
+} from "../state/sessionLogStore.js";
 
 const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
 
@@ -64,12 +74,29 @@ export default function EmrView() {
   const timersRef = useRef([]);
 
   const processEvent = useCallback((type, data) => {
-    if (type === "transcript") setTranscriptLines(prev => [...prev.slice(-49), data]);
-    else if (type === "biomarker") setBiomarkers(data);
-    else if (type === "concordance_flag") setFlag(data);
-    else if (type === "soap_update") setSoap(data);
-    else if (type === "esi_update") setEsi(data);
-    else if (type === "identity_update") setStoreIdentity(data);
+    if (type === "transcript") {
+      setTranscriptLines(prev => [...prev.slice(-49), data]);
+      logTranscript(data);
+    } else if (type === "biomarker") {
+      setBiomarkers(data);
+      logBiomarkers(data);
+    } else if (type === "concordance_flag") {
+      setFlag(data);
+      logFlag(data);
+    } else if (type === "soap_update") {
+      setSoap(data);
+      logSOAP(data);
+    } else if (type === "esi_update") {
+      setEsi(data);
+      logESI(data);
+    } else if (type === "identity_update") {
+      setStoreIdentity(data);
+      logIdentity(data);
+    } else if (type === "triage_complete") {
+      logTriageComplete(true);
+    } else if (type === "triage_emergency") {
+      logEmergency(data);
+    }
   }, []);
 
   const onEvent = useCallback((evt) => processEvent(evt.type, evt.data), [processEvent]);
@@ -125,7 +152,12 @@ export default function EmrView() {
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="epic-btn">Edit</button>
                 <button className="epic-btn">Defer to RN</button>
-                <button className="epic-btn primary">Sign &amp; Save</button>
+                <button
+                  className="epic-btn primary"
+                  onClick={() => navigate("/clinician/report")}
+                >
+                  Sign &amp; Save → Generate Report
+                </button>
               </div>
             </div>
           </div>

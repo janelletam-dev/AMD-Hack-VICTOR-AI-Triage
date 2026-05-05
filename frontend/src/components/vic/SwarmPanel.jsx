@@ -56,7 +56,7 @@ export default function SwarmPanel({ activeAgents = new Set(), processLoad = 87,
       <div style={{ position: "relative", flex: 1, minHeight: 320 }}>
         <NetworkSvg activeAgents={activeAgents} />
         {AGENTS.map((a) => (
-          <AgentNode key={a.id} agent={a} active={activeAgents.has(a.id)} />
+          <AgentNode key={a.id} agent={a} active={activeAgents.has(a.full)} />
         ))}
       </div>
 
@@ -98,8 +98,8 @@ function NetworkSvg({ activeAgents }) {
         <line
           key={a.id}
           x1="50%" y1="14%" x2={`${a.x}%`} y2={`${a.y}%`}
-          stroke={activeAgents.has(a.id) ? "var(--vic-primary)" : "rgba(255,255,255,0.18)"}
-          strokeWidth={activeAgents.has(a.id) ? 2 : 1}
+          stroke={activeAgents.has(a.full) ? "var(--vic-primary)" : "rgba(255,255,255,0.18)"}
+          strokeWidth={activeAgents.has(a.full) ? 2 : 1}
           strokeDasharray="4 4"
         />
       ))}

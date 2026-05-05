@@ -107,6 +107,9 @@ class ScribeAgent:
             log.info("scribe fallback (LLM unavailable): %s", e)
             return self._fallback_update(context)
 
+    # Cap the subjective section to prevent infinite appending when patient talks a lot.
+    MAX_SUBJECTIVE_CHARS = 800
+
     def _fallback_update(self, context: dict) -> SOAPNote:
         """Deterministic, template-based SOAP merge when the LLM is offline.
 
@@ -121,7 +124,7 @@ class ScribeAgent:
 
         if transcript:
             self.note.subjective = (
-                f"Patient reports: {transcript}"[:500]
+                f"Patient reports: {transcript}"[:self.MAX_SUBJECTIVE_CHARS]
             )
         helios = biomarkers.get("helios") if isinstance(biomarkers, dict) else None
         if isinstance(helios, dict) and helios:

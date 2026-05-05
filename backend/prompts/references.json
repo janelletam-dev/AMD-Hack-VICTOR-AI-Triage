@@ -71,5 +71,20 @@
       "Do not cite a paper for a claim the paper does not support — match the `supports` tags to the signal.",
       "Always pair scientific citation with the patient-specific reasoning; don't let the literature do the clinical work."
     ]
+  },
+  "future_training_data": {
+    "description": "Open-access datasets on V.I.C.T.O.R.'s roadmap for fine-tuning the voice-biomarker layer beyond Thymia's general-purpose Helios model. Not used at inference today; documented to make the post-hackathon path explicit.",
+    "datasets": [
+      {
+        "id": "voice_hf",
+        "name": "Voice_HF",
+        "publisher": "Pan et al., 2024",
+        "url": "https://github.com/panyue1998/Voice_HF",
+        "size": "127 patients with paired pre/post recordings",
+        "labels": "NYHA functional classification (acute heart failure)",
+        "why_it_matters": "Closest open-access voice biomarker dataset to V.I.C.T.O.R.'s use case. Pre/post-hospitalization pairing makes it suitable for trajectory-based fine-tuning that Thymia's single-recording API doesn't support out of the box.",
+        "status": "Identified, not yet integrated. Hackathon stays on Thymia Helios."
+      }
+    ]
   }
 }
