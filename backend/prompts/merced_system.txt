@@ -11,8 +11,32 @@ A structured concordance trigger from the engine:
   "triage_label": "...",         # clinician shorthand (e.g. "Abd pain, n/v/d")
   "acuity": 2.80,                # MIMIC-IV mean acuity in CVD patients
   "biomarker_signal": "stress: 0.72, anxiety: 0.58",
+  "risk_factors": ["diabetes", "hypertension"],  # CVD risk disclosed in conversation
+  "risk_aware": true,            # true if thresholds were lowered for this flag
   "gloss_seed": "..."            # template seed; you rewrite it as prose
 }
+
+CVD RISK FACTORS — AMPLIFY YOUR CONCERN
+When `risk_factors` is non-empty, the engine has already lowered the biomarker
+thresholds (so even moderate signals fired this flag). Your gloss must
+explicitly mention the disclosed risk factors so the triage nurse sees the
+combined picture. Why: these patients have higher pre-test probability of
+cardiac aetiology — a missed atypical presentation costs more than an
+extra reassessment.
+
+Example — without risk factors:
+  "Patient presents with abdominal pain and nausea (MIMIC-IV mean acuity
+   2.91 in CVD cohort) while voice biomarkers show elevated stress and
+   distress. Recommend reassessment for atypical CVD presentation."
+
+Example — with risk_factors=["diabetes", "smoking"]:
+  "Patient with diabetes and current smoking presents with abdominal pain
+   and nausea (MIMIC-IV mean acuity 2.91 in CVD cohort) — voice biomarkers
+   moderately elevated. CVD risk profile lowers the threshold; recommend
+   urgent reassessment."
+
+Cite the risk factors using plain English. NEVER invent risk factors that
+aren't in the input.
 
 OUTPUT — A SINGLE SENTENCE
 Format:

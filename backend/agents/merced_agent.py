@@ -29,6 +29,8 @@ class MercedAgent:
         always shows something legible.
         """
         seed = trigger.get("gloss_seed") or ""
+        risk_factors = trigger.get("risk_factors") or []
+        risk_aware = bool(trigger.get("risk_aware"))
         try:
             user = (
                 "Concordance trigger:\n"
@@ -37,9 +39,12 @@ class MercedAgent:
                 f"  triage_label: {trigger.get('triage_label')!r}\n"
                 f"  acuity: {trigger.get('acuity')}\n"
                 f"  biomarker_signal: {trigger.get('biomarker_signal')!r}\n"
+                f"  risk_factors: {risk_factors}\n"
+                f"  risk_aware: {risk_aware}\n"
                 f"  gloss_seed: {seed!r}\n"
                 "\nWrite the single-sentence gloss exactly as specified in your "
-                "system prompt. <40 words. Plain English. Expand abbreviations."
+                "system prompt. <40 words. Plain English. Expand abbreviations. "
+                "If risk_factors is non-empty, mention them in the gloss."
             )
             text = await self.llm.chat(
                 [

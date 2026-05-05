@@ -162,6 +162,85 @@ class BiomarkerThresholds:
 
 THRESHOLDS = BiomarkerThresholds()
 
+# When the patient discloses a CVD risk factor (diabetes, hypertension, prior
+# MI, smoking, family history, hypercholesterolaemia), we lower the threshold
+# so even moderate (0.33-bucket) signals fire a flag. Clinical rationale:
+# these patients have higher pre-test probability of cardiac aetiology, so
+# the cost of a missed atypical presentation outweighs the cost of an extra
+# reassessment.
+RISK_AWARE_THRESHOLDS = BiomarkerThresholds(
+    helios_stress=0.33,
+    helios_distress=0.33,
+    helios_mental_strain=0.33,
+    helios_exhaustion=0.33,
+    apollo_anxiety=0.33,
+    cvd_marker=0.33,
+)
+
+
+# CVD risk-factor patterns. Match against the running transcript; surface
+# any hits to M.E.R.C.E.D. so it can mention them in the gloss, and to
+# V.I.C.T.O.R. so it can swap to the lowered thresholds.
+@dataclass(frozen=True)
+class RiskFactor:
+    label: str          # short label for display ("diabetes", "hypertension", …)
+    patterns: tuple[str, ...]
+
+
+CVD_RISK_FACTORS: tuple[RiskFactor, ...] = (
+    RiskFactor("diabetes", (
+        r"\bdiabet(es|ic)\b",
+        r"\btype\s*(1|2|i|ii|one|two)\s*diabet",
+        r"\bhigh\s+blood\s+sugar\b",
+        r"\binsulin\b",
+        r"\bmetformin\b",
+    )),
+    RiskFactor("hypertension", (
+        r"\bhypertens",
+        r"\bhigh\s+blood\s+pressure\b",
+        r"\bbp\s+is\s+(high|up)\b",
+        r"\bblood\s+pressure.*high\b",
+        r"\b(lisinopril|amlodipine|losartan|metoprolol|atenolol|hydrochlorothiazide)\b",
+    )),
+    RiskFactor("prior MI", (
+        r"\b(heart\s+attack|myocardial\s+infarction|m\.?i\.?)\b",
+        r"\bheart\s+(stent|bypass|surgery)\b",
+        r"\bcoronary\s+(stent|bypass|artery\s+disease|cad)\b",
+        r"\bafib\b|\batrial\s+fibrillation\b",
+        r"\bheart\s+failure\b|\bchf\b",
+    )),
+    RiskFactor("smoking", (
+        r"\bsmok(e|er|ing)\b",
+        r"\bcigarett",
+        r"\bvape\b|\bvaping\b",
+        r"\bnicotin",
+        r"\bpack\s+a\s+day\b|\b(\d+)\s+packs?\s+(a|per)\s+day\b",
+    )),
+    RiskFactor("family history of CVD", (
+        r"\b(my\s+)?(dad|father|mom|mother|brother|sister|parent|grand(father|mother|pa|ma))\b.*\b(heart|cardiac|stroke)\b",
+        r"\bfamily\s+history\s+of\s+(heart|cardiac|cvd)\b",
+        r"\b(dad|father|mom|mother).*\b(heart\s+attack|m\.?i\.?|bypass)\b",
+    )),
+    RiskFactor("high cholesterol", (
+        r"\bhigh\s+cholesterol\b",
+        r"\bhyperlipidaemia\b|\bhyperlipidemia\b",
+        r"\b(statin|atorvastatin|simvastatin|rosuvastatin|crestor|lipitor)\b",
+    )),
+)
+
+
+def detect_risk_factors(transcript: str) -> list[str]:
+    """Return the list of CVD-risk-factor labels mentioned in the transcript."""
+    if not transcript:
+        return []
+    hits: list[str] = []
+    for rf in CVD_RISK_FACTORS:
+        for pat in rf.patterns:
+            if re.search(pat, transcript, re.IGNORECASE):
+                hits.append(rf.label)
+                break
+    return hits
+
 
 # ---------------------------------------------------------------------------
 # Engine
@@ -176,6 +255,14 @@ class ConcordanceFlag:
     biomarker_signal: str
     gloss_seed: str = ""    # the structured seed; M.E.R.C.E.D. expands to prose
     matches: list[str] = field(default_factory=list)
+    # CVD risk factors mentioned in the transcript (e.g. ["diabetes",
+    # "smoking"]). Surfaced to M.E.R.C.E.D. so the gloss reflects elevated
+    # pre-test probability, and to V.I.C.T.O.R. so escalation reasoning
+    # can cite them.
+    risk_factors: list[str] = field(default_factory=list)
+    # True if these flags were evaluated under the lowered thresholds
+    # because risk factors were present.
+    risk_aware: bool = False
 
 
 class ConcordanceEngine:
@@ -235,19 +322,41 @@ class ConcordanceEngine:
     def evaluate(
         self, transcript: str, biomarkers: dict
     ) -> list[ConcordanceFlag]:
-        """Return concordance flags for the given window."""
-        elevated, signals = self.biomarker_elevated(biomarkers)
+        """Return concordance flags for the given window.
+
+        If the transcript mentions any CVD risk factor (diabetes, hypertension,
+        prior MI, smoking, family history, hypercholesterolaemia), we evaluate
+        biomarkers under the LOWERED thresholds — these patients deserve
+        extra scrutiny even at moderate (0.33-bucket) signal levels.
+        """
+        risk_factors = detect_risk_factors(transcript)
+        risk_aware = bool(risk_factors)
+        thresholds = RISK_AWARE_THRESHOLDS if risk_aware else self.thresholds
+
+        # Save the active thresholds onto self temporarily so biomarker_elevated
+        # picks up the right cutoff. Restored after evaluation.
+        original = self.thresholds
+        try:
+            self.thresholds = thresholds
+            elevated, signals = self.biomarker_elevated(biomarkers)
+        finally:
+            self.thresholds = original
+
         if not elevated:
             return []
 
         flags: list[ConcordanceFlag] = []
         signal_str = ", ".join(signals)
+        rf_clause = (
+            f" Risk factors disclosed: {', '.join(risk_factors)}."
+            if risk_factors else ""
+        )
 
         for entry, matches in self.find_minimisation(transcript):
             seed = (
                 f"Patient presents with {entry.triage_label.lower()} "
                 f"(MIMIC-IV mean acuity {entry.acuity:.2f} in CVD patients). "
-                f"Voice biomarkers indicate {signal_str}. "
+                f"Voice biomarkers indicate {signal_str}.{rf_clause} "
                 f"Recommend reassessment for atypical CVD presentation."
             )
             flags.append(
@@ -259,6 +368,8 @@ class ConcordanceEngine:
                     biomarker_signal=signal_str,
                     gloss_seed=seed,
                     matches=matches,
+                    risk_factors=risk_factors,
+                    risk_aware=risk_aware,
                 )
             )
 
@@ -275,10 +386,12 @@ class ConcordanceEngine:
                         biomarker_signal=signal_str,
                         gloss_seed=(
                             f"Patient verbally minimises symptoms ('{phrase}') "
-                            f"while voice biomarkers indicate {signal_str}. "
+                            f"while voice biomarkers indicate {signal_str}.{rf_clause} "
                             f"Recommend deeper symptom elicitation."
                         ),
                         matches=[phrase],
+                        risk_factors=risk_factors,
+                        risk_aware=risk_aware,
                     )
                 )
 

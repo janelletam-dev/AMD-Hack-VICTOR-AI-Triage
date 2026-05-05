@@ -208,4 +208,6 @@ class VictorAgent:
             "acuity": f.acuity,
             "biomarker_signal": f.biomarker_signal,
             "gloss_seed": f.gloss_seed,
+            "risk_factors": list(f.risk_factors),
+            "risk_aware": f.risk_aware,
         }
