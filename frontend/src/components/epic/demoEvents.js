@@ -1,4 +1,12 @@
 export const DEMO_EVENTS = [
+  // Kiosk intake completes first — clinician dashboard shows captured identity
+  // before voice triage starts. In a real session this fires when J.A.C.K.I.E.
+  // confirms name + DOB + reason for visit during intake.
+  { delay: 100, type: "identity_update", data: {
+    name: "Hernandez, Maria L.",
+    dob: "1971-03-14",
+    complaint: "Stomach pain, nausea",
+  } },
   { delay: 200, type: "agent_activity", data: { agent: "V.I.C.T.O.R.", status: "active", action: "Listening for first utterance" } },
   { delay: 600, type: "transcript", data: { text: "my stomach hurts and i feel nauseous", language: "en", is_final: true } },
   { delay: 800, type: "agent_activity", data: { agent: "S.C.R.I.B.E.", status: "active", action: "Composing subjective" } },

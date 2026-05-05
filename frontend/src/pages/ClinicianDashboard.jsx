@@ -8,7 +8,12 @@ import ServiceStatusBanner from "../components/vic/ServiceStatusBanner.jsx";
 import SOAPCard from "../components/vic/SOAPCard.jsx";
 import SwarmPanel from "../components/vic/SwarmPanel.jsx";
 import { DEMO_EVENTS, DEMO_PATIENT } from "../components/epic/demoEvents.js";
-import { useIdentity, setIdentity as setStoreIdentity } from "../state/identityStore.js";
+import {
+  useIdentity,
+  useOriginalIdentity,
+  setIdentity as setStoreIdentity,
+  editIdentity as editStoreIdentity,
+} from "../state/identityStore.js";
 import {
   appendTranscript as logTranscript,
   setBiomarkerSummary as logBiomarkers,
@@ -498,7 +503,49 @@ function BiomarkerBar({ label, value, concerning }) {
 
 function IdentityCard({ identity }) {
   const { name, dob, complaint } = identity || {};
-  if (!name && !dob && !complaint) return null;
+  const original = useOriginalIdentity();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ name: "", dob: "", complaint: "" });
+  const [edited, setEdited] = useState(false);
+  const [pushError, setPushError] = useState(null);
+  if (!name && !dob && !complaint && !editing) return null;
+
+  const startEdit = () => {
+    setDraft({ name: name || "", dob: dob || "", complaint: complaint || "" });
+    setPushError(null);
+    setEditing(true);
+  };
+  const cancelEdit = () => setEditing(false);
+  const saveEdit = async () => {
+    // Persist locally first (optimistic) so the UI updates immediately.
+    // editIdentity preserves the kiosk-original snapshot for the audit trail.
+    const next = {
+      name: draft.name.trim(),
+      dob: draft.dob.trim(),
+      complaint: draft.complaint.trim(),
+    };
+    editStoreIdentity(next);
+    logIdentity(next);
+    setEditing(false);
+    setEdited(true);
+
+    // Push back to the backend so /api/report and any live subscribers (EMR,
+    // patient kiosk) see the correction too. Failure is non-fatal — local
+    // edit still applies; we just surface a small banner so the clinician
+    // knows the server-side log won't reflect this change yet.
+    try {
+      const httpBase = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
+      const r = await fetch(`${httpBase}/api/identity/demo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      setPushError(String(e?.message || e));
+    }
+  };
+
   return (
     <section className="vic-glass" style={{
       padding: 20, borderRadius: 16,
@@ -506,31 +553,149 @@ function IdentityCard({ identity }) {
       display: "flex", flexDirection: "column", gap: 12,
     }}>
       <div style={{
-        fontSize: 10, fontWeight: 700,
-        color: "rgba(47, 217, 244, 0.8)",
-        textTransform: "uppercase", letterSpacing: "0.2em",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
       }}>
-        Patient Intake · Captured at Kiosk
+        <div style={{
+          fontSize: 10, fontWeight: 700,
+          color: "rgba(47, 217, 244, 0.8)",
+          textTransform: "uppercase", letterSpacing: "0.2em",
+        }}>
+          Patient Intake · Captured at Kiosk
+          {edited && (
+            <span style={{
+              marginLeft: 10, color: "var(--vic-tertiary)",
+              fontSize: 9, letterSpacing: "0.18em",
+            }}>· Edited by Clinician</span>
+          )}
+        </div>
+        {!editing ? (
+          <button
+            onClick={startEdit}
+            style={editChipStyle}
+            aria-label="Edit captured identity"
+          >
+            ✎ Edit
+          </button>
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={cancelEdit} style={editChipStyle}>Cancel</button>
+            <button onClick={saveEdit} style={{
+              ...editChipStyle,
+              background: "var(--vic-primary)",
+              color: "var(--vic-on-primary)",
+              borderColor: "var(--vic-primary)",
+            }}>Save</button>
+          </div>
+        )}
       </div>
       <div style={{
         display: "grid",
         gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
         gap: 16,
       }}>
-        <IdField label="Name" value={name || "—"} primary={!!name} />
-        <IdField label="Date of birth" value={dob || "—"} primary={!!dob} />
-        <IdField
-          label="Reason for visit"
-          value={complaint || "—"}
-          primary={!!complaint}
-          wide
-        />
+        {editing ? (
+          <>
+            <IdInput
+              label="Name"
+              value={draft.name}
+              onChange={(v) => setDraft({ ...draft, name: v })}
+              autoFocus
+            />
+            <IdInput
+              label="Date of birth"
+              value={draft.dob}
+              onChange={(v) => setDraft({ ...draft, dob: v })}
+              placeholder="YYYY-MM-DD or January 15, 1980"
+            />
+            <IdInput
+              label="Reason for visit"
+              value={draft.complaint}
+              onChange={(v) => setDraft({ ...draft, complaint: v })}
+              wide
+            />
+          </>
+        ) : (
+          <>
+            <IdField
+              label="Name" value={name || "—"} primary={!!name}
+              original={original?.name}
+            />
+            <IdField
+              label="Date of birth" value={dob || "—"} primary={!!dob}
+              original={original?.dob}
+            />
+            <IdField
+              label="Reason for visit"
+              value={complaint || "—"}
+              primary={!!complaint}
+              original={original?.complaint}
+              wide
+            />
+          </>
+        )}
       </div>
+      {pushError && !editing && (
+        <div style={{
+          fontSize: 11, color: "var(--vic-tertiary)",
+          fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
+        }}>
+          ⚠ Server sync failed ({pushError}) — local edit applied; report and
+          live patient view may not reflect the correction until backend reachable.
+        </div>
+      )}
     </section>
   );
 }
 
-function IdField({ label, value, primary, wide }) {
+function IdInput({ label, value, onChange, autoFocus, wide, placeholder }) {
+  return (
+    <div style={{ gridColumn: wide ? "1 / -1" : "auto" }}>
+      <label style={{
+        display: "block",
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 10, fontWeight: 700,
+        color: "var(--vic-on-surface-variant)",
+        textTransform: "uppercase", letterSpacing: "0.18em",
+        marginBottom: 4,
+      }}>{label}</label>
+      <input
+        type="text"
+        value={value}
+        autoFocus={autoFocus}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: "100%",
+          padding: "8px 10px",
+          background: "rgba(12, 19, 36, 0.6)",
+          color: "var(--vic-on-surface)",
+          fontFamily: "'Inter', system-ui, sans-serif",
+          fontSize: 15,
+          border: "1px solid rgba(47, 217, 244, 0.35)",
+          borderRadius: 8,
+          outline: "none",
+          boxSizing: "border-box",
+        }}
+        onFocus={(e) => { e.currentTarget.style.borderColor = "var(--vic-primary)"; }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.35)"; }}
+      />
+    </div>
+  );
+}
+
+const editChipStyle = {
+  padding: "5px 12px", borderRadius: 999,
+  background: "var(--vic-bg-highest)",
+  color: "var(--vic-on-surface)",
+  border: "1px solid rgba(47, 217, 244, 0.35)",
+  fontFamily: "'Space Grotesk', sans-serif",
+  fontWeight: 600, fontSize: 11,
+  cursor: "pointer", letterSpacing: "0.04em",
+};
+
+function IdField({ label, value, primary, wide, original }) {
+  const displayValue = value === "—" ? "" : value;
+  const displayOriginal = original && original !== displayValue ? original : null;
   return (
     <div style={{ gridColumn: wide ? "1 / -1" : "auto" }}>
       <div style={{
@@ -545,6 +710,18 @@ function IdField({ label, value, primary, wide }) {
         color: primary ? "var(--vic-on-surface)" : "var(--vic-on-surface-variant)",
         fontWeight: primary ? 600 : 400,
       }}>{value}</div>
+      {displayOriginal && (
+        <div style={{
+          marginTop: 4,
+          fontSize: 11, lineHeight: 1.4,
+          color: "var(--vic-tertiary)",
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: "0.04em",
+        }}>
+          was: <span style={{ textDecoration: "line-through", opacity: 0.85 }}>{displayOriginal}</span>
+          <span style={{ marginLeft: 6, fontSize: 9, opacity: 0.7 }}>· kiosk capture</span>
+        </div>
+      )}
     </div>
   );
 }

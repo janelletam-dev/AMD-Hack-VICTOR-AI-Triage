@@ -78,6 +78,34 @@ async def generate_report(req: ReportRequest) -> ReportResponse:
     return ReportResponse(**result)
 
 
+class IdentityUpdate(BaseModel):
+    name: str | None = None
+    dob: str | None = None
+    complaint: str | None = None
+
+
+@router.post("/identity/{room_id}")
+async def update_identity(room_id: str, body: IdentityUpdate) -> dict:
+    """Clinician-side correction of voice-captured identity.
+
+    Updates the per-room SessionLogStore (so /api/report sees the corrected
+    values) and republishes an `identity_update` event on the bus (so any
+    live patient / EMR subscribers also re-render with the correction).
+    """
+    if not room_id:
+        raise HTTPException(status_code=400, detail="room_id required")
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="no fields provided")
+
+    fields["source"] = "clinician_edit"
+    # Lazy import to keep this router decoupled from event_bus at import time.
+    from services.event_bus import bus
+    await bus.publish(room_id, {"type": "identity_update", "data": fields})
+
+    return {"ok": True, "room_id": room_id, "applied": fields}
+
+
 @router.get("/references")
 async def get_references() -> dict:
     """Return the static references library that grounds V.I.C.T.O.R.'s clinical
