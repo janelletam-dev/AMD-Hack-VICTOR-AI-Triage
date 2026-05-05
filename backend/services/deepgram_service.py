@@ -1,25 +1,54 @@
 """Deepgram Flux Multilingual STT client.
 
-Wraps the Deepgram SDK v3 websocket API for live streaming transcription.
-Audio frames (PCM16, 16kHz mono) are pushed via send(); transcript events
-are dispatched to a caller-supplied callback.
+Connects directly to the v2 WebSocket endpoint (`/v2/listen`), since the
+Deepgram Python SDK v3.7 only exposes v1 — and Flux requires v2.
+
+Flux v2 protocol (probed against the live server, since public docs
+were not findable at build time):
+  - Connect URL: only `?model=flux-general-multi`. Audio-format query
+    params (encoding, sample_rate, channels) are REJECTED with HTTP 400.
+    Audio format is auto-detected from the stream.
+  - Server emits `{"type":"Connected", request_id, sequence_id}` first.
+  - Optional client message before audio:
+        {"type":"Configure",
+         "language_hints":["en","es"],     # optional
+         "thresholds":{...},               # optional
+         "keyterms":[...], "profanity_filter": bool}
+    Server replies with `{"type":"ConfigureSuccess", ...}`.
+  - Then stream raw PCM16 (16 kHz mono assumed) as binary frames.
+  - To close cleanly: `{"type":"CloseStream"}` then close the WS.
+
+Public API is identical to the previous SDK-backed version so audio_ws.py
+needs no changes.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable
+from urllib.parse import urlencode
 
-from deepgram import (
-    DeepgramClient,
-    LiveOptions,
-    LiveTranscriptionEvents,
-)
+import websockets
+from websockets.exceptions import ConnectionClosed
 
 from config import settings
 
 log = logging.getLogger("victor.deepgram")
+
+DEEPGRAM_BASE = "wss://api.deepgram.com"
+DEEPGRAM_PATH = "/v2/listen"
+DEEPGRAM_MODEL = "flux-general-multi"
+
+# Common ED-presenting languages. Improves accuracy and code-switching for
+# patients who switch between e.g. English and Spanish mid-sentence.
+DEFAULT_LANGUAGE_HINTS = ("en", "es")
+
+# Bound the outbound audio queue. At 25 frames/sec (40 ms each), 2000 entries
+# is ~80s of audio backlog, far beyond what we'd ever queue if the upstream
+# WS is healthy. Drops on overflow are logged.
+_TX_QUEUE_MAX = 2000
 
 
 @dataclass
@@ -30,7 +59,7 @@ class Transcript:
 
 
 class DeepgramService:
-    """Per-session Deepgram streaming connection.
+    """Per-session Deepgram Flux v2 streaming connection.
 
     Usage:
         dg = DeepgramService(on_transcript=my_callback)
@@ -39,12 +68,19 @@ class DeepgramService:
         await dg.stop()
     """
 
-    def __init__(self, on_transcript: Callable[[Transcript], Any] | None = None) -> None:
+    def __init__(
+        self,
+        on_transcript: Callable[[Transcript], Any] | None = None,
+    ) -> None:
         self.api_key = settings.deepgram_api_key
         self._on_transcript = on_transcript
-        self._client: DeepgramClient | None = None
-        self._conn: Any = None
+        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._reader_task: asyncio.Task | None = None
+        self._writer_task: asyncio.Task | None = None
+        self._tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_TX_QUEUE_MAX)
         self._started = False
+        self._dropped_frames = 0
+        self._first_messages_logged = 0
 
         if not self.api_key:
             log.warning("DEEPGRAM_API_KEY not set — STT will be disabled")
@@ -53,77 +89,162 @@ class DeepgramService:
         if not self.api_key:
             return False
 
-        self._client = DeepgramClient(self.api_key)
-        self._conn = self._client.listen.websocket.v("1")
+        # Flux v2 ONLY accepts `model` as a query param. Audio format is
+        # auto-detected from the stream — passing encoding/sample_rate/
+        # channels yields HTTP 400.
+        params = {"model": DEEPGRAM_MODEL}
+        url = f"{DEEPGRAM_BASE}{DEEPGRAM_PATH}?{urlencode(params)}"
+        headers = {"Authorization": f"Token {self.api_key}"}
 
-        self._conn.on(LiveTranscriptionEvents.Transcript, self._handle_transcript)
-        self._conn.on(LiveTranscriptionEvents.Error, self._handle_error)
-        self._conn.on(LiveTranscriptionEvents.Open, self._handle_open)
-        self._conn.on(LiveTranscriptionEvents.Close, self._handle_close)
-        self._conn.on(LiveTranscriptionEvents.UtteranceEnd, self._handle_utterance_end)
+        try:
+            self._ws = await websockets.connect(
+                url,
+                extra_headers=headers,  # websockets 13.x kwarg name
+                max_size=2**20,         # 1 MB message ceiling — Flux events are small
+                ping_interval=20,
+                ping_timeout=20,
+            )
+        except Exception as e:
+            log.error("deepgram /v2/listen connect failed: %s", e)
+            return False
 
-        # Flux Multilingual — auto-detects language, supports code-switching,
-        # and emits turn-detection signals natively. See VICTOR_PRD.md §4.
-        options = LiveOptions(
-            model="flux-general-multi",
-            encoding="linear16",
-            sample_rate=settings.sample_rate_hz,
-            channels=1,
-            interim_results=True,
-            utterance_end_ms="1500",
-            smart_format=True,
-            punctuate=True,
-        )
+        self._started = True
+        log.info("deepgram /v2 connected (model=%s)", DEEPGRAM_MODEL)
+        self._reader_task = asyncio.create_task(self._reader())
+        self._writer_task = asyncio.create_task(self._writer())
 
-        ok = self._conn.start(options)
-        if ok:
-            self._started = True
-            log.info("deepgram connection opened")
-        else:
-            log.error("deepgram connection failed to start")
-        return ok
+        # Send Configure with language hints so Flux can code-switch on
+        # multilingual speech. Sent via the writer queue's text path.
+        try:
+            await self._ws.send(json.dumps({
+                "type": "Configure",
+                "language_hints": list(DEFAULT_LANGUAGE_HINTS),
+            }))
+        except Exception as e:
+            log.warning("deepgram Configure send failed: %s", e)
+
+        return True
 
     def send(self, audio_bytes: bytes) -> None:
-        if self._conn and self._started:
-            self._conn.send(audio_bytes)
+        """Sync handoff into the writer task's queue. Drops on overflow.
+
+        Kept synchronous so the audio_ws receive loop doesn't need to await
+        on every PCM frame.
+        """
+        if not self._started:
+            return
+        try:
+            self._tx_queue.put_nowait(audio_bytes)
+        except asyncio.QueueFull:
+            self._dropped_frames += 1
+            if self._dropped_frames % 100 == 1:
+                log.warning(
+                    "deepgram audio queue full — dropped %d frames",
+                    self._dropped_frames,
+                )
 
     async def stop(self) -> None:
-        if self._conn and self._started:
-            self._conn.finish()
-            self._started = False
-            log.info("deepgram connection closed")
+        self._started = False
+        for task in (self._reader_task, self._writer_task):
+            if task is not None:
+                task.cancel()
+        if self._ws is not None:
+            try:
+                # Per Deepgram conventions, send the JSON close frame so the
+                # server flushes any buffered transcript before closing.
+                await self._ws.send(json.dumps({"type": "CloseStream"}))
+            except Exception:
+                pass
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+        self._ws = None
+        log.info("deepgram /v2 closed (dropped %d frames)", self._dropped_frames)
 
-    def _handle_open(self, _self_notused: Any, open_resp: Any, **kwargs: Any) -> None:
-        log.info("deepgram ws open")
+    # ------------------------------------------------------------------ tasks
 
-    def _handle_close(self, _self_notused: Any, close_resp: Any, **kwargs: Any) -> None:
-        log.info("deepgram ws closed")
-
-    def _handle_error(self, _self_notused: Any, error: Any, **kwargs: Any) -> None:
-        log.error("deepgram error: %s", error)
-
-    def _handle_utterance_end(self, _self_notused: Any, utterance_end: Any, **kwargs: Any) -> None:
-        log.debug("deepgram utterance end")
-
-    def _handle_transcript(self, _self_notused: Any, result: Any, **kwargs: Any) -> None:
+    async def _writer(self) -> None:
+        assert self._ws is not None
         try:
-            alt = result.channel.alternatives[0]
-            text = alt.transcript
-            if not text:
-                return
+            while True:
+                frame = await self._tx_queue.get()
+                await self._ws.send(frame)
+        except (asyncio.CancelledError, ConnectionClosed):
+            return
+        except Exception:
+            log.exception("deepgram writer crashed")
 
-            is_final = bool(getattr(result, "is_final", False))
-            lang = (
-                getattr(result.channel, "detected_language", None)
-                or getattr(alt, "language", None)
-                or getattr(result, "language", None)
-                or "en"
-            )
+    async def _reader(self) -> None:
+        assert self._ws is not None
+        try:
+            async for msg in self._ws:
+                if isinstance(msg, bytes):
+                    continue   # Deepgram only sends text frames
+                self._dispatch(msg)
+        except (asyncio.CancelledError, ConnectionClosed):
+            return
+        except Exception:
+            log.exception("deepgram reader crashed")
 
-            transcript = Transcript(text=text, language=lang, is_final=is_final)
-            log.info("transcript [%s] final=%s: %s", lang, is_final, text)
+    # ------------------------------------------------------------------ parse
 
-            if self._on_transcript:
+    def _dispatch(self, raw: str) -> None:
+        # Log the first few raw events so we can confirm Flux's exact event
+        # shape against the docs (which we can't verify pre-connect).
+        if self._first_messages_logged < 3:
+            log.info("deepgram raw event: %s", raw[:400])
+            self._first_messages_logged += 1
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            log.warning("deepgram non-JSON message: %r", raw[:120])
+            return
+
+        # Flux v2 documents transcript events under several variants depending
+        # on the model; we extract defensively. Common shapes:
+        #   { "type": "Results", "channel": { "alternatives": [...] }, ... }
+        #   { "type": "Transcript", "transcript": "...", "is_final": ... }
+        text, lang, is_final = _extract_transcript(payload)
+        if text is None:
+            return
+
+        transcript = Transcript(text=text, language=lang or "en", is_final=bool(is_final))
+        log.info(
+            "transcript [%s] final=%s: %s",
+            transcript.language, transcript.is_final, transcript.text,
+        )
+        if self._on_transcript:
+            try:
                 self._on_transcript(transcript)
-        except (IndexError, AttributeError) as e:
-            log.warning("transcript parse error: %s", e)
+            except Exception:
+                log.exception("on_transcript callback raised")
+
+
+def _extract_transcript(payload: dict[str, Any]) -> tuple[str | None, str | None, bool]:
+    """Best-effort transcript extraction from a Flux event.
+
+    Returns (text, language, is_final). text is None for non-transcript events.
+    """
+    # Shape 1 — same as nova v1: payload.channel.alternatives[0].transcript
+    channel = payload.get("channel")
+    if isinstance(channel, dict):
+        alts = channel.get("alternatives")
+        if isinstance(alts, list) and alts:
+            alt = alts[0] or {}
+            text = alt.get("transcript") or alt.get("text") or ""
+            if text:
+                lang = (
+                    channel.get("detected_language")
+                    or alt.get("language")
+                    or payload.get("language")
+                )
+                is_final = bool(payload.get("is_final"))
+                return text, lang, is_final
+
+    # Shape 2 — Flux flat: payload.transcript / payload.text
+    text = payload.get("transcript") or payload.get("text")
+    if isinstance(text, str) and text:
+        return text, payload.get("language"), bool(payload.get("is_final"))
+
+    return None, None, False
