@@ -19,6 +19,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from agents import swarm
 from config import settings
 from engine.concordance import engine as concordance_engine
+from engine.concordance import detect_emergency
 from services.deepgram_service import DeepgramService, Transcript
 from services.event_bus import bus
 from services.thymia_service import (
@@ -103,7 +104,15 @@ async def audio_ws(
         "latest_final_transcript": "",      # for concordance evaluation
         "helios_submitted": False,          # one Helios run per session
         "helios_lang": "en-US",             # default; updated from Deepgram language
+        # J.A.C.K.I.E. follow-up loop state
+        "jackie_turn_count": 0,             # how many J.A.C.K.I.E. turns have fired
+        "jackie_max_turns": 6,              # OPQRST coverage typically fits in 6 turns
+        "jackie_busy": False,               # debounce: don't double-fire on rapid finals
+        "escalated": False,                 # flipped when V.I.C.T.O.R. emits a flag
+        "jackie_history": [],               # list[ {"role","text"} ] for context if we want it
     }
+
+    state["emergency_fired"] = False
 
     async def on_transcript(t: Transcript) -> None:
         # Track the most recent finalised transcript for concordance + remember
@@ -127,7 +136,167 @@ async def audio_ws(
             },
         )
 
+        # Patient-safety short-circuit: any explicit emergency phrase
+        # (e.g. "I can't breathe", "my chest is crushing") forces ESI-1
+        # regardless of biomarkers, and aborts the J.A.C.K.I.E. loop.
+        if t.is_final and t.text and not state["emergency_fired"]:
+            em = detect_emergency(t.text)
+            if em is not None:
+                state["emergency_fired"] = True
+                asyncio.create_task(handle_emergency(em, t.text, t.language or "en"))
+                return  # don't run normal J.A.C.K.I.E. flow on this turn
+
+        # During the J.A.C.K.I.E. follow-up loop, every finalised patient
+        # utterance triggers the next turn.
+        if (
+            t.is_final
+            and t.text
+            and state["phase"] == "conversation"
+            and not state["jackie_busy"]
+            and not state["emergency_fired"]
+            and state["jackie_turn_count"] < state["jackie_max_turns"]
+        ):
+            asyncio.create_task(jackie_turn(t.text, t.language or "en"))
+
+    async def handle_emergency(em, utterance: str, language: str) -> None:
+        """Patient said an explicit emergency phrase. Force ESI-1, emit a
+        critical alert, and tell the patient (calmly) to stay put.
+        """
+        log.warning(
+            "session=%s EMERGENCY detected: %s — phrase=%r",
+            session_id, em.label, em.matched_phrase,
+        )
+        # 1. Critical event for the clinician dashboard.
+        await bus.publish(
+            room,
+            {
+                "type": "triage_emergency",
+                "data": {
+                    "label": em.label,
+                    "severity": em.severity,
+                    "matched_phrase": em.matched_phrase,
+                    "trigger_utterance": utterance,
+                    "language": language,
+                    "agent": "V.I.C.T.O.R.",
+                },
+            },
+        )
+        # 2. Force ESI 1 — bypasses the normal concordance pipeline.
+        await bus.publish(
+            room,
+            {
+                "type": "esi_update",
+                "data": {
+                    "standard_esi": 3,
+                    "victor_esi": 1,
+                    "adjustment_reason": (
+                        f"Verbal emergency signal ({em.label}): patient "
+                        f"said {em.matched_phrase!r}."
+                    ),
+                    "agent": "V.I.C.T.O.R.",
+                },
+            },
+        )
+        # 3. Calm closing turn for the patient. Skip remaining J.A.C.K.I.E.
+        closing = (
+            "I hear you. Stay right here — I'm getting someone to you immediately."
+        )
+        await bus.publish(
+            room,
+            {
+                "type": "jackie_turn",
+                "data": {
+                    "text": closing,
+                    "turn": state["jackie_turn_count"] + 1,
+                    "max_turns": state["jackie_max_turns"],
+                    "language": language,
+                    "closing": True,
+                    "emergency": True,
+                },
+            },
+        )
+        # 4. Signal triage complete so the kiosk advances to Done.
+        await bus.publish(
+            room,
+            {"type": "triage_complete", "data": {"reason": f"emergency:{em.label}"}},
+        )
+
     on_transcript_holder["fn"] = on_transcript
+
+    async def jackie_turn(patient_utterance: str, language: str) -> None:
+        """Run one J.A.C.K.I.E. turn: ask agent for next question, publish
+        `jackie_turn` event, and emit `triage_complete` once we hit max turns.
+        """
+        state["jackie_busy"] = True
+        try:
+            state["jackie_turn_count"] += 1
+            turn = state["jackie_turn_count"]
+            await bus.publish(
+                room,
+                {
+                    "type": "agent_activity",
+                    "data": {
+                        "agent": "J.A.C.K.I.E.",
+                        "status": "active",
+                        "action": f"Composing follow-up #{turn}",
+                    },
+                },
+            )
+            text = await swarm.jackie.respond(
+                patient_utterance,
+                language=language,
+                escalated=state["escalated"],
+            )
+            state["jackie_history"].append({"role": "patient", "text": patient_utterance})
+            state["jackie_history"].append({"role": "jackie", "text": text})
+            await bus.publish(
+                room,
+                {
+                    "type": "jackie_turn",
+                    "data": {
+                        "text": text,
+                        "turn": turn,
+                        "max_turns": state["jackie_max_turns"],
+                        "language": language,
+                    },
+                },
+            )
+            await bus.publish(
+                room,
+                {
+                    "type": "agent_activity",
+                    "data": {"agent": "J.A.C.K.I.E.", "status": "idle", "action": "Awaiting reply"},
+                },
+            )
+            if turn >= state["jackie_max_turns"]:
+                # Send a warm closing turn, then signal completion.
+                closing = (
+                    "Thank you for sharing all of that. A clinician will be "
+                    "with you very soon, and everything you've told me will be "
+                    "right in front of them."
+                )
+                await bus.publish(
+                    room,
+                    {
+                        "type": "jackie_turn",
+                        "data": {
+                            "text": closing,
+                            "turn": turn + 1,
+                            "max_turns": state["jackie_max_turns"],
+                            "language": language,
+                            "closing": True,
+                        },
+                    },
+                )
+                await bus.publish(
+                    room,
+                    {
+                        "type": "triage_complete",
+                        "data": {"reason": "interview-coverage-complete"},
+                    },
+                )
+        finally:
+            state["jackie_busy"] = False
 
     frames_received = 0
     bytes_received = 0
@@ -185,6 +354,11 @@ async def audio_ws(
         flags = concordance_engine.evaluate(
             state["latest_final_transcript"], {"helios": helios_block}
         )
+        # If any concordance flag fires, mark the session as escalated so
+        # subsequent J.A.C.K.I.E. turns use ESCALATED MODE (targeted cardiac
+        # elicitation, framed as routine intake).
+        if flags:
+            state["escalated"] = True
         await swarm.victor.on_concordance_evaluation(
             room=room,
             flags=flags,
@@ -246,7 +420,7 @@ async def audio_ws(
                     await bus.publish(room, payload)
 
                 # Track phase locally so we know when to start/stop buffering
-                # complaint audio and when to fire Helios.
+                # complaint audio and when to fire Helios + the J.A.C.K.I.E. loop.
                 if ptype == "phase":
                     new_phase = (payload.get("data") or {}).get("phase")
                     prev_phase = state["phase"]
@@ -255,6 +429,13 @@ async def audio_ws(
                         helios_tasks.append(
                             asyncio.create_task(submit_helios_and_evaluate())
                         )
+                    # Entering the conversation phase → kick off J.A.C.K.I.E.
+                    # against the captured chief complaint.
+                    if new_phase == "conversation" and state["jackie_turn_count"] == 0:
+                        seed = state["latest_final_transcript"] or "the patient's chief complaint"
+                        helios_tasks.append(asyncio.create_task(
+                            jackie_turn(seed, language=state["helios_lang"].split("-")[0])
+                        ))
 
                 # Capture the confirmed DOB from identity_update so Helios
                 # can include it on the model run.

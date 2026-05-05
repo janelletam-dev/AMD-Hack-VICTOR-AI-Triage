@@ -243,6 +243,89 @@ def detect_risk_factors(transcript: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Emergency keyword detection — short-circuits the J.A.C.K.I.E. loop and
+# forces ESI 1. These phrases are direct verbal signals of immediate danger
+# and require zero biomarker corroboration to escalate.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class EmergencyKeyword:
+    label: str           # short label for the alert ("airway", "cardiac", …)
+    severity: str        # "ESI-1" | "ESI-2"
+    patterns: tuple[str, ...]
+
+
+EMERGENCY_KEYWORDS: tuple[EmergencyKeyword, ...] = (
+    EmergencyKeyword("airway / breathing", "ESI-1", (
+        r"\bcan'?t\s+breathe\b",
+        r"\bcan'?t\s+get\s+(my\s+)?breath\b",
+        r"\bcan'?t\s+catch\s+(my\s+)?breath\b",
+        r"\bnot\s+able\s+to\s+breathe\b",
+        r"\bchoking\b",
+        r"\bturning\s+blue\b",
+    )),
+    EmergencyKeyword("cardiac — crushing chest pain", "ESI-1", (
+        r"\bchest\s+is\s+crushing\b",
+        r"\bcrushing\s+chest\b",
+        r"\belephant\s+on\s+my\s+chest\b",
+        r"\bpressure\s+on\s+my\s+chest\b.*\b(can'?t|can\s*hardly)\b",
+        r"\b(severe|worst)\s+chest\s+pain\b",
+        # Patient explicitly rates chest pain at 10/10 (or ten out of ten)
+        r"\bchest\s+pain\b.*\b(10|ten)\s*(out\s*of\s*ten|/\s*10)\b",
+        r"\b(10|ten)\s*(out\s*of\s*ten|/\s*10)\b.*\bchest\s+pain\b",
+    )),
+    EmergencyKeyword("subjective collapse risk", "ESI-1", (
+        r"\bi\s+think\s+i\s*('?m|am)\s+dying\b",
+        r"\bi\s*('?m|am)\s+dying\b",
+        r"\bi\s*('?m|am)\s+going\s+to\s+(pass\s+out|die|faint|collapse)\b",
+        r"\bi\s*('?m|am)\s+about\s+to\s+(pass\s+out|faint|collapse)\b",
+        r"\bgoing\s+to\s+lose\s+consciousness\b",
+    )),
+    EmergencyKeyword("major haemorrhage", "ESI-1", (
+        r"\bbleeding\s+(badly|a\s+lot|heavily|out)\b",
+        r"\bcan'?t\s+stop\s+(the\s+)?bleeding\b",
+        r"\bblood\s+(everywhere|all\s+over)\b",
+        r"\bvomit(ing)?\s+blood\b",
+        r"\bcoughing\s+up\s+blood\b",
+    )),
+    EmergencyKeyword("stroke signs", "ESI-1", (
+        r"\bcan'?t\s+(speak|talk|move\s+my\s+(arm|leg|side))\b",
+        r"\b(face|mouth)\s+is\s+drooping\b",
+        r"\bnumb\s+on\s+one\s+side\b",
+        r"\bsudden(ly)?\s+(weak|numb|slurred|confused)\b",
+        r"\bworst\s+headache\s+of\s+my\s+life\b",
+    )),
+)
+
+
+@dataclass
+class EmergencyDetection:
+    label: str
+    severity: str
+    matched_phrase: str
+
+
+def detect_emergency(transcript: str) -> EmergencyDetection | None:
+    """Return the first emergency keyword match, or None.
+
+    Caller should treat any return value as a hard escalation: skip the
+    rest of the J.A.C.K.I.E. interview and fire an ESI-1 alert.
+    """
+    if not transcript:
+        return None
+    for kw in EMERGENCY_KEYWORDS:
+        for pat in kw.patterns:
+            m = re.search(pat, transcript, re.IGNORECASE)
+            if m:
+                return EmergencyDetection(
+                    label=kw.label,
+                    severity=kw.severity,
+                    matched_phrase=m.group(0),
+                )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
 

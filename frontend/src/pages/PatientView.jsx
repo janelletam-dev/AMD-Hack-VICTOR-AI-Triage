@@ -7,7 +7,10 @@ import { setIdentity as setStoreIdentity, clearIdentity } from "../state/identit
 const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
 const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
 
-const PHASES = ["name", "dob", "complaint"];
+// `conversation` is J.A.C.K.I.E.'s adaptive follow-up loop. It's not a
+// fixed step like the prior three — the agent drives one question at a time
+// from the backend via `jackie_turn` events until `triage_complete` fires.
+const PHASES = ["name", "dob", "complaint", "conversation"];
 
 // Show the bottom dev strip only when ?debug=1 is on the URL — keeps the
 // kiosk UI clean and prevents overlap with the floating route toggle.
@@ -37,6 +40,10 @@ function phaseTTS(voice, phase) {
         `what's been going on — what's bringing you in today, ` +
         `and any concerns on your mind? I'm here to listen.`
       );
+    case "conversation":
+      // J.A.C.K.I.E. drives this phase — TTS comes from `jackie_turn`
+      // events, not a fixed prompt.
+      return "";
     default:
       return "";
   }
@@ -45,14 +52,18 @@ function phaseTTS(voice, phase) {
 function phasePrompt(phase) {
   switch (phase) {
     case "name":
-      return { label: "Step 1 of 3", title: "Please share your full name." };
+      return { label: "Step 1 of 4", title: "Please share your full name." };
     case "dob":
-      return { label: "Step 2 of 3", title: "And your date of birth?" };
+      return { label: "Step 2 of 4", title: "And your date of birth?" };
     case "complaint":
       return {
-        label: "Step 3 of 3",
+        label: "Step 3 of 4",
         title: "Tell me more about your concerns.",
       };
+    case "conversation":
+      // The actual title is replaced at render time with J.A.C.K.I.E.'s
+      // current question (see Interview component).
+      return { label: "Step 4 of 4", title: "Just a few more questions." };
     default:
       return { label: "", title: "" };
   }
@@ -312,6 +323,11 @@ export default function PatientView() {
   // patient to confirm before advancing.
   const [confirm, setConfirm] = useState(null); // { phase, value } | null
   const [parseError, setParseError] = useState("");
+  // J.A.C.K.I.E. follow-up loop state
+  const [jackieTurn, setJackieTurn] = useState(null); // { text, turn, max_turns, closing, emergency }
+  const [triageComplete, setTriageComplete] = useState(false);
+  // Patient-safety: triage_emergency event payload, when fired.
+  const [emergency, setEmergency] = useState(null);  // { label, severity, matched_phrase }
   const phase = PHASES[phaseIdx];
 
   const wsUrl = useMemo(
@@ -326,8 +342,52 @@ export default function PatientView() {
   // when Deepgram re-emits the same segment.
   const phaseTextRef = useRef("");
   const lastFinalRef = useRef("");
+  // Refs that onEvent needs to call but are defined later in the component.
+  // Late-bound (set in the effect below) so the WS callback always sees
+  // the current playTTS / mic-start / mic-stop.
+  const playTTSRef = useRef(null);
+  const micStartRef = useRef(null);
+  const micStopRef = useRef(null);
 
   const onEvent = useCallback((evt) => {
+    // J.A.C.K.I.E. follow-up turn → play TTS, then auto-restart the mic
+    // when TTS finishes so the patient can answer hands-free.
+    if (evt.type === "jackie_turn" && evt.data?.text) {
+      const data = evt.data;
+      setJackieTurn({
+        text: data.text,
+        turn: data.turn,
+        max_turns: data.max_turns,
+        closing: !!data.closing,
+      });
+      // Reset the running transcript so the patient's reply starts fresh.
+      phaseTextRef.current = "";
+      lastFinalRef.current = "";
+      setInterimText("");
+      const fn = playTTSRef.current;
+      if (fn) fn(data.text, () => {
+        // After TTS finishes, give a tiny gap then re-engage the mic.
+        if (data.closing) return; // closing turn → triage_complete will move us to done
+        const startFn = micStartRef.current;
+        if (startFn) setTimeout(() => startFn(), 250);
+      });
+      return;
+    }
+    if (evt.type === "triage_complete") {
+      setTriageComplete(true);
+      return;
+    }
+    if (evt.type === "triage_emergency" && evt.data) {
+      setEmergency({
+        label: evt.data.label,
+        severity: evt.data.severity || "ESI-1",
+        matched_phrase: evt.data.matched_phrase,
+      });
+      // Stop the mic immediately; closing TTS will play, then we exit.
+      const stopFn = micStopRef.current;
+      if (stopFn) stopFn();
+      return;
+    }
     if (evt.type !== "transcript" || !evt.data?.text) return;
     const text = evt.data.text.trim();
     if (!text) return;
@@ -359,6 +419,17 @@ export default function PatientView() {
     }
     lastFinalRef.current = text;
     setAnswers((a) => ({ ...a, [p]: phaseTextRef.current }));
+
+    // During the conversation phase, when the patient finishes a turn, stop
+    // the mic so the audio worklet is idle while J.A.C.K.I.E. composes the
+    // next question. We'll auto-restart it after TTS finishes.
+    if (p === "conversation") {
+      // Defer to next tick so React state updates settle.
+      setTimeout(() => {
+        const stopFn = micStopRef.current;
+        if (stopFn) stopFn();
+      }, 80);
+    }
   }, []);
 
   const { status, sendBinary, send } = useWebSocket(wsUrl, { onEvent });
@@ -375,8 +446,14 @@ export default function PatientView() {
   const audioRef = useRef(null);
   const [ttsState, setTtsState] = useState("idle");
 
-  const playTTS = useCallback((text) => {
-    if (!text || !voice) return;
+  const playTTS = useCallback((text, onEnded) => {
+    if (!text || !voice) {
+      // Even with no audio, still let the caller know "we're done speaking"
+      // so the conversation loop can advance. The patient will see the text
+      // on screen instead.
+      if (typeof onEnded === "function") setTimeout(onEnded, 100);
+      return;
+    }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -385,10 +462,35 @@ export default function PatientView() {
     const audio = new Audio(url);
     audioRef.current = audio;
     setTtsState("speaking");
-    audio.addEventListener("ended", () => setTtsState("done"));
-    audio.addEventListener("error", () => setTtsState("error"));
-    audio.play().catch(() => setTtsState("error"));
+    let settled = false;
+    const finish = (status) => {
+      if (settled) return;
+      settled = true;
+      setTtsState(status);
+      if (typeof onEnded === "function") onEnded();
+    };
+    audio.addEventListener("ended", () => finish("done"));
+    audio.addEventListener("error", () => finish("error"));
+    audio.play().catch(() => finish("error"));
   }, [voice]);
+
+  // Late-bind so onEvent (registered with useWebSocket once) always uses
+  // the current versions of these callbacks.
+  useEffect(() => {
+    playTTSRef.current = playTTS;
+    micStartRef.current = start;
+    micStopRef.current = stop;
+  }, [playTTS, start, stop]);
+
+  // When the backend signals triage complete, end the session.
+  useEffect(() => {
+    if (!triageComplete) return;
+    const t = setTimeout(() => {
+      stop();
+      setStep("done");
+    }, 1200); // brief pause so the closing TTS can finish
+    return () => clearTimeout(t);
+  }, [triageComplete, stop]);
 
   // Play the question prompt whenever the active phase changes.
   useEffect(() => {
@@ -538,6 +640,7 @@ export default function PatientView() {
             interimText={interimText}
             confirm={confirm}
             parseError={parseError}
+            jackieTurn={jackieTurn}
             framesSent={framesSent}
             onStart={start}
             onStopMic={handleStopMic}
@@ -709,13 +812,20 @@ function PrivacyNote({ style }) {
 
 function Interview({
   voice, wsStatus, ttsState, micState,
-  phase, phaseIdx, answers, interimText, confirm, parseError,
+  phase, phaseIdx, answers, interimText, confirm, parseError, jackieTurn,
   framesSent, onStart, onStopMic, onAdvance, onConfirmYes, onConfirmRetry,
 }) {
   const recording = micState === "recording";
   const error = micState === "error";
   const speaking = ttsState === "speaking";
-  const { label, title } = phasePrompt(phase);
+  const { label: defaultLabel, title: defaultTitle } = phasePrompt(phase);
+  const isConvo = phase === "conversation";
+  // In the conversation phase, the title becomes J.A.C.K.I.E.'s current
+  // question and the label becomes the turn counter.
+  const label = isConvo && jackieTurn
+    ? `Question ${jackieTurn.turn} of ${jackieTurn.max_turns}`
+    : defaultLabel;
+  const title = isConvo && jackieTurn?.text ? jackieTurn.text : defaultTitle;
   const captured = answers[phase] || "";
   const liveText = interimText || captured;
   const isLast = phaseIdx === PHASES.length - 1;
@@ -726,11 +836,14 @@ function Interview({
   else if (speaking) subline = "Take your time — I'll be ready to listen when you are.";
   else if (recording) subline = "I'm listening — share whatever feels right.";
   else if (parseError) subline = parseError;
+  else if (isConvo && jackieTurn?.closing) subline = "All done — wrapping up your check-in.";
+  else if (isConvo) subline = "Take your time — answer when you're ready.";
   else if (captured && phase === "complaint") subline = "Thank you for sharing that. Tap continue when you're ready, or the mic if there's more.";
   else if (phase === "complaint") subline = "Whenever you're ready, tap the microphone — I'm here to listen.";
   else subline = "Whenever you're ready, tap the microphone and share with me.";
 
-  const advanceLabel = isLast ? "Send to my care team →" : "Continue →";
+  // After complaint we advance into the J.A.C.K.I.E. follow-up loop, not done.
+  const advanceLabel = phase === "complaint" ? "Continue — follow-up questions →" : "Continue →";
   const canAdvance = !!captured.trim() && !isConfirming;
 
   return (
@@ -819,6 +932,7 @@ function PhaseStepper({ phaseIdx, answers }) {
     { key: "name", label: "Name" },
     { key: "dob", label: "Date of birth" },
     { key: "complaint", label: "Reason for visit" },
+    { key: "conversation", label: "Follow-up" },
   ];
   return (
     <div style={{
@@ -955,6 +1069,8 @@ function TranscriptCard({ transcript, active, phase }) {
     ? "Heard — Date of birth"
     : phase === "complaint"
     ? "Heard — Reason for visit"
+    : phase === "conversation"
+    ? "Heard — Your answer"
     : "Live Transcription";
   const placeholder = phase === "name"
     ? "Awaiting your name…"
@@ -962,6 +1078,8 @@ function TranscriptCard({ transcript, active, phase }) {
     ? "Awaiting your date of birth…"
     : phase === "complaint"
     ? "Awaiting your answer…"
+    : phase === "conversation"
+    ? "Take your time — I'll listen when you're ready…"
     : "Awaiting your voice…";
 
   return (
