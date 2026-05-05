@@ -1,17 +1,20 @@
-"""REST: /api/report — E.L.M.E.R. evidence synthesis.
-
-Day 1: stubbed. Wired to E.L.M.E.R. on Day 4.
-"""
+"""REST: /api/report — E.L.M.E.R. evidence synthesis."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from agents import swarm
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
 
 class ReportRequest(BaseModel):
     room_id: str
+    # Optional session log payload from the client. The frontend already has
+    # the running transcript, biomarkers, flags and SOAP in memory; passing
+    # them here saves us building a server-side per-room session store today.
+    session_log: dict | None = None
 
 
 class ReportResponse(BaseModel):
@@ -28,12 +31,6 @@ class ReportResponse(BaseModel):
 async def generate_report(req: ReportRequest) -> ReportResponse:
     if not req.room_id:
         raise HTTPException(status_code=400, detail="room_id required")
-    # TODO(Day 4): wire to E.L.M.E.R. agent + EventBus session log
-    return ReportResponse(
-        report="Evidence report generation pending — see Day 4 milestone.",
-        esi_standard=0,
-        esi_adjusted=0,
-        flags=[],
-        biomarker_summary={},
-        soap_note={},
-    )
+    session_log = req.session_log or {}
+    result = await swarm.elmer.synthesize(session_log)
+    return ReportResponse(**result)

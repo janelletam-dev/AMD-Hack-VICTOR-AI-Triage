@@ -16,6 +16,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from agents import swarm
 from config import settings
 from engine.concordance import engine as concordance_engine
 from services.deepgram_service import DeepgramService, Transcript
@@ -176,32 +177,21 @@ async def audio_ws(
 
         await bus.publish(room, {"type": "biomarker", "data": result.to_event()})
 
-        # Concordance: evaluate the latest transcript + this biomarker snapshot.
+        # Run the concordance engine, then hand off to V.I.C.T.O.R. The
+        # orchestrator publishes concordance_flag (with M.E.R.C.E.D. gloss),
+        # esi_update, and soap_update events — and emits agent_activity for
+        # the swarm panel along the way.
+        helios_block = result.to_event()["helios"]
         flags = concordance_engine.evaluate(
-            state["latest_final_transcript"], {"helios": result.to_event()["helios"]}
+            state["latest_final_transcript"], {"helios": helios_block}
         )
-        for flag in flags:
-            await bus.publish(
-                room,
-                {
-                    "type": "concordance_flag",
-                    "data": {
-                        "tier": flag.tier,
-                        "trigger_phrase": flag.trigger_phrase,
-                        "triage_label": flag.triage_label,
-                        "acuity": flag.acuity,
-                        "biomarker_signal": flag.biomarker_signal,
-                        "evidence_basis": (
-                            f"MIMIC-IV: mean acuity {flag.acuity:.2f} for "
-                            f"{flag.triage_label.lower()} in CVD cohort."
-                        ),
-                        "signal_summary": flag.biomarker_signal,
-                        "confidence": 0.9 if flag.tier <= 2 else 0.7,
-                        "agent": "M.E.R.C.E.D.",
-                        "gloss": flag.gloss_seed,
-                    },
-                },
-            )
+        await swarm.victor.on_concordance_evaluation(
+            room=room,
+            flags=flags,
+            transcript=state["latest_final_transcript"],
+            biomarkers={"helios": helios_block},
+            chief_complaint_label=(flags[0].triage_label if flags else None),
+        )
 
     try:
         while True:

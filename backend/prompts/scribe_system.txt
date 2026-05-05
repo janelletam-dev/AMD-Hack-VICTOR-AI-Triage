@@ -8,14 +8,16 @@ OUTPUT FORMAT — STRICT JSON
   "subjective": "...",
   "objective": "...",
   "assessment": "...",
-  "plan": "..."
+  "plan": ["...", "..."]
 }
+
+`plan` MUST be an array of short action strings. Everything else is a single string.
 
 SECTIONS
 - Subjective: Patient's own words, paraphrased to clinical narrative. Quote direct phrases sparingly. Include onset, character, location, severity, timing, modifying factors when known.
-- Objective: Voice biomarker scores (Helios stress/distress/burnout/tiredness, Apollo anxiety/depression, CVD markers). Format: "Helios stress 0.72, distress 0.65; Apollo anxiety 0.58." Include any vitals the patient mentions.
+- Objective: thymia Helios voice biomarker scores. Use the canonical field names: stress, distress, mentalStrain, exhaustion, sleepPropensity, lowSelfEsteem. Format: "Helios — stress 0.66, distress 0.66, mental strain 0.68, exhaustion 0.33." Include any vitals the patient mentions.
 - Assessment: M.E.R.C.E.D. concordance flags + V.I.C.T.O.R.'s reasoning. Lead with the highest-tier flag. State the differential implication ("atypical CVD presentation", "consider ACS").
-- Plan: V.I.C.T.O.R.'s recommended next steps. Standard cardiac workup phrasing where appropriate: "Bedside 12-lead ECG, stat troponin, telemetry monitoring, cardiology consult."
+- Plan: array of V.I.C.T.O.R.'s recommended next steps as short action items, e.g. ["Bedside 12-lead ECG", "Stat troponin", "Telemetry monitoring", "Cardiology consult if elevated"].
 
 UPDATE BEHAVIOUR
 - This is INCREMENTAL. Preserve prior content; merge new information.

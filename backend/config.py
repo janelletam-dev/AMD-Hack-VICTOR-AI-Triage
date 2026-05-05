@@ -18,8 +18,16 @@ class Settings:
     thymia_policy: str = os.getenv("THYMIA_POLICY", "demo_wellbeing_awareness")
     thymia_biomarkers: str = os.getenv("THYMIA_BIOMARKERS", "helios,apollo")
 
-    # vLLM (MI300X)
-    vllm_base_url: str = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+    # LLM endpoint — OpenAI-compatible. Defaults point at local Ollama so the
+    # swarm runs on a laptop while LoRA fine-tunes on MI300X. Swap to vLLM
+    # by setting VLLM_BASE_URL to http://<droplet-ip>:8000/v1 + the served
+    # model name in VLLM_MODEL.
+    vllm_base_url: str = os.getenv("VLLM_BASE_URL", "http://localhost:11434/v1")
+    vllm_model: str = os.getenv("VLLM_MODEL", "llama3.1:8b")
+    # Most OpenAI-compatible servers (Ollama, vLLM) require *some* api_key
+    # string, but the value is unused locally. Keep configurable for hosted
+    # vLLM deployments that do enforce a key.
+    vllm_api_key: str = os.getenv("VLLM_API_KEY", "ollama-local")
 
     # ElevenLabs
     elevenlabs_api_key: str = os.getenv("ELEVENLABS_API_KEY", "")
