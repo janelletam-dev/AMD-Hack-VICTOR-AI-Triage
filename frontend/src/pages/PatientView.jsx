@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { Clock, MessageCircle, Gauge, Flag } from "lucide-react";
+import { Clock, MessageCircle, Gauge, Flag, Venus, Mars, Transgender, Minus } from "lucide-react";
 import VoiceSelector from "../components/VoiceSelector.jsx";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import { useAudioCapture } from "../hooks/useAudioCapture.js";
@@ -462,6 +462,13 @@ export default function PatientView() {
   const [stillListening, setStillListening] = useState(false);
   const lastTranscriptUpdateAtRef = useRef(0);
   const stillListeningTimerRef = useRef(null);
+  // Editable accumulating transcript for the complaint phase. Each
+  // finalised utterance appends; the patient can edit the textarea
+  // directly to fix mistranscriptions before tapping Send. Sidesteps
+  // the in-place accumulation magic — what you see is what gets sent.
+  // Other phases stay on the captured/interim model because their
+  // answers are short.
+  const [complaintDraft, setComplaintDraft] = useState("");
   // Track how many times the patient has retried the last_name phase.
   // After 2 failures we skip and let the clinician fill it in via the
   // editable identity card. Avoids derailing the demo on a hard surname.
@@ -643,6 +650,22 @@ export default function PatientView() {
     // tail of the prior utterance.
     setInterimText("");
     setAnswers((a) => ({ ...a, [p]: phaseTextRef.current }));
+
+    // For the complaint phase: append this final to the editable
+    // textarea draft so the patient sees their full statement
+    // accumulating in plain view. They can edit it before tapping Send.
+    // Functional updater avoids stale-closure issues if multiple finals
+    // arrive in quick succession.
+    if (p === "complaint") {
+      setComplaintDraft((prev) => {
+        const trimmed = text.trim();
+        if (!trimmed) return prev;
+        if (!prev) return trimmed;
+        // Skip if Deepgram echoed exactly the same final twice
+        if (prev.endsWith(trimmed)) return prev;
+        return `${prev} ${trimmed}`;
+      });
+    }
 
     // ───────────── conversation phase: stop mic to free worklet ─────────────
     if (p === "conversation") {
@@ -841,6 +864,7 @@ export default function PatientView() {
     phaseTextRef.current = "";
     lastFinalRef.current = "";
     setInterimText("");
+    setComplaintDraft("");  // fresh editable textarea for new interview
     setConfirm(null);
     setParseError("");
     // Reset the cross-view store at the start of a new interview.
@@ -1064,17 +1088,28 @@ export default function PatientView() {
 
   const advancePhase = useCallback(() => {
     stop();
-    const captured = (phaseTextRef.current || interimText || "").trim();
-    if (phase === "complaint" && captured) {
-      setAnswers((a) => ({ ...a, complaint: captured }));
-      setStoreIdentity({ complaint: captured });
-      send && send({ type: "identity_update", data: { complaint: captured } });
+    // For complaint phase: the source of truth is the editable textarea
+    // (complaintDraft), not phaseTextRef. The patient may have edited it
+    // since the last final fired, so we commit whatever's in the
+    // textarea right now — what they see is what they send.
+    if (phase === "complaint") {
+      const text = complaintDraft.trim();
+      if (text) {
+        setAnswers((a) => ({ ...a, complaint: text }));
+        setStoreIdentity({ complaint: text });
+        send && send({ type: "identity_update", data: { complaint: text } });
+      }
+    } else {
+      const captured = (phaseTextRef.current || interimText || "").trim();
+      if (captured) {
+        setAnswers((a) => ({ ...a, [phase]: captured }));
+      }
     }
     setInterimText("");
     phaseTextRef.current = "";
     if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
     else setStep("done");
-  }, [phase, phaseIdx, stop, interimText, send]);
+  }, [phase, phaseIdx, stop, interimText, send, complaintDraft]);
 
   // Patient taps "Restart" on the complaint phase — they realised they
   // want to redo their concern. Clear the captured text, replay the
@@ -1094,6 +1129,7 @@ export default function PatientView() {
     phaseTextRef.current = "";
     lastFinalRef.current = "";
     setInterimText("");
+    setComplaintDraft("");  // wipe the editable textarea on Restart
     setAnswers((a) => ({ ...a, complaint: "" }));
     setStoreIdentity({ complaint: "" });
     send && send({ type: "identity_update", data: { complaint: "" } });
@@ -1145,6 +1181,8 @@ export default function PatientView() {
             processingState={processingState}
             spellingMode={spellingMode}
             stillListening={stillListening}
+            complaintDraft={complaintDraft}
+            onComplaintDraftChange={setComplaintDraft}
             onStart={start}
             onStopMic={handleStopMic}
             onCancel={stop}
@@ -1327,6 +1365,7 @@ function Interview({
   voice, personaName, wsStatus, ttsState, micState,
   phase, phaseIdx, answers, interimText, confirm, parseError, jackieTurn,
   framesSent, noisy, processingState, spellingMode, stillListening,
+  complaintDraft, onComplaintDraftChange,
   onStart, onStopMic, onCancel, onAdvance, onConfirmYes, onConfirmRetry,
   onTextSubmit, onRestart, onSelectGender,
 }) {
@@ -1440,6 +1479,18 @@ function Interview({
 
       {isConfirming ? (
         <ConfirmCard confirm={confirm} onYes={onConfirmYes} onRetry={onConfirmRetry} />
+      ) : phase === "gender" ? null : phase === "complaint" ? (
+        // Editable textarea — accumulates each finalised utterance and
+        // shows the running interim partial below it. Patient can fix
+        // mistranscriptions before tapping Send. What you see is what
+        // gets sent to the clinician.
+        <ComplaintEditor
+          value={complaintDraft}
+          onChange={onComplaintDraftChange}
+          interim={interimText}
+          recording={recording}
+          speaking={speaking}
+        />
       ) : (
         <TranscriptCard
           transcript={liveText}
@@ -1457,6 +1508,7 @@ function Interview({
           processingState={processingState}
           ttsState={ttsState}
           personaName={personaName}
+          complaintHasText={!!complaintDraft && complaintDraft.trim().length > 0}
           onCommit={onStopMic}
           onCancel={onCancel}
           onAdvance={onAdvance}
@@ -1589,32 +1641,45 @@ function StillListeningPill() {
 //     (existing advance flow takes over)
 function CommitButton({
   phase, recording, hasCaptured, processingState, ttsState, personaName,
+  complaintHasText,
   onCommit, onCancel, onAdvance, onRestart,
 }) {
   const thinking = processingState === "thinking";
   const speaking = ttsState === "speaking";
 
-  // Complaint phase, captured something → use the existing advance button
-  // because we want to KEEP the captured text and move on, not re-parse.
-  // Also offer a Restart so the patient can redo their concern from scratch
-  // if they realised mid-thought they want a different framing.
-  if (phase === "complaint" && hasCaptured && !recording && !thinking && !speaking) {
-    return (
-      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-        <button onClick={onRestart} style={secondaryBtnStyle}>
-          ↺ Restart
-        </button>
-        <button
-          onClick={onAdvance}
-          style={primaryBtnStyle(true)}
-        >
-          Continue — follow-up questions →
-        </button>
-      </div>
-    );
+  // ── COMPLAINT PHASE ────────────────────────────────────────────────
+  // Single source of truth is the editable textarea. Show Send + Restart
+  // whenever the textarea has any text, regardless of whether the mic is
+  // hot or idle. Send commits the textarea contents (which may include
+  // patient edits) and advances directly — no two-step "Send then
+  // Continue" any more.
+  if (phase === "complaint") {
+    if (thinking || speaking) {
+      return (
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <button disabled style={primaryBtnStyle(false)}>
+            {thinking ? `${personaName} is thinking…` : `${personaName} is speaking…`}
+          </button>
+        </div>
+      );
+    }
+    if (complaintHasText) {
+      return (
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <button onClick={onRestart} style={secondaryBtnStyle}>
+            ↺ Restart
+          </button>
+          <button onClick={onAdvance} style={primaryBtnStyle(true)}>
+            Send →
+          </button>
+        </div>
+      );
+    }
+    // No text yet — just hint that the mic will fill it in.
+    return null;
   }
 
-  // Processing or speaking → disabled with status text.
+  // ── ALL OTHER PHASES (name, dob, conversation) ──────────────────────
   if (thinking || speaking) {
     return (
       <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
@@ -1625,25 +1690,16 @@ function CommitButton({
     );
   }
 
-  // Recording with captured text → commit affordance. Label varies by phase:
-  //   - Identity phases (first/last name, dob): "I'm done →" — short answers,
-  //     committing immediately is what the patient expects.
-  //   - Complaint phase: "Send →" — softer than "I'm done" so the patient
-  //     doesn't feel they're committing to a final sentence; reads more like
-  //     submitting a message they've finished writing. Sits alongside the
-  //     mic-tap path (still works) so they have two ways to commit.
   if (recording && hasCaptured) {
-    const label = phase === "complaint" ? "Send →" : "I'm done →";
     return (
       <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
         <button onClick={onCommit} style={primaryBtnStyle(true)}>
-          {label}
+          I'm done →
         </button>
       </div>
     );
   }
 
-  // Recording with no text yet → quiet Cancel option (skip if not recording).
   if (recording) {
     return (
       <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
@@ -1654,7 +1710,6 @@ function CommitButton({
     );
   }
 
-  // Idle (waiting for TTS to finish or for first auto-start) → no button.
   return null;
 }
 
@@ -1769,33 +1824,56 @@ function MicCircle({ recording, error, onClick }) {
 // "Are you male, female, or non-binary?" via voice has too many failure
 // modes and is more invasive than a button tap). Order: Female first
 // because the demo's pitch is centered on under-triage of women in CVD.
+//
+// Big lucide icons (Venus / Mars / Transgender / Minus) make this read
+// at a glance for distressed or visually-impaired patients — the icon
+// is the affordance, the label confirms the meaning.
 function GenderPicker({ onSelect }) {
-  const opts = ["Female", "Male", "Non-binary", "Prefer not to say"];
+  const opts = [
+    { value: "Female",            Icon: Venus },
+    { value: "Male",              Icon: Mars },
+    { value: "Non-binary",        Icon: Transgender },
+    { value: "Prefer not to say", Icon: Minus },
+  ];
   return (
     <div style={{
-      display: "flex", flexWrap: "wrap", gap: 12,
-      justifyContent: "center", maxWidth: 560,
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+      gap: 16,
+      maxWidth: 720, width: "100%",
+      padding: "0 24px",
     }}>
-      {opts.map((value) => (
+      {opts.map(({ value, Icon }) => (
         <button
           key={value}
           onClick={() => onSelect(value)}
           style={{
-            padding: "16px 28px", borderRadius: 999,
-            background: "linear-gradient(to right, var(--vic-primary), #008ea1)",
-            color: "var(--vic-on-primary)",
-            fontWeight: 700, fontSize: 16,
-            border: "none", cursor: "pointer",
-            minWidth: 160,
-            boxShadow: "0 8px 30px rgba(47, 217, 244, 0.3)",
-            letterSpacing: "0.02em",
-            transition: "transform .12s",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 14,
+            padding: "28px 20px", borderRadius: 24,
+            background: "linear-gradient(135deg, rgba(47, 217, 244, 0.08), rgba(0, 142, 161, 0.04))",
+            border: "1px solid rgba(47, 217, 244, 0.25)",
+            color: "var(--vic-on-surface)",
+            fontWeight: 700, fontSize: 16, letterSpacing: "0.02em",
+            cursor: "pointer",
+            minHeight: 160,
+            boxShadow: "0 8px 30px rgba(47, 217, 244, 0.08)",
+            transition: "transform .12s, border-color .12s, background .12s",
           }}
           onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.97)")}
           onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
-          onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "scale(1)";
+            e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.25)";
+            e.currentTarget.style.background = "linear-gradient(135deg, rgba(47, 217, 244, 0.08), rgba(0, 142, 161, 0.04))";
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.5)";
+            e.currentTarget.style.background = "linear-gradient(135deg, rgba(47, 217, 244, 0.14), rgba(0, 142, 161, 0.08))";
+          }}
         >
-          {value}
+          <Icon size={56} strokeWidth={1.5} color="var(--vic-primary)" />
+          <span>{value}</span>
         </button>
       ))}
     </div>
@@ -1947,6 +2025,81 @@ function StatusPill({ recording, error, ttsState, wsStatus, noisy, processingSta
         color, fontSize: 12, fontWeight: 600,
         textTransform: "uppercase", letterSpacing: "0.08em",
       }}>{label}</span>
+    </div>
+  );
+}
+
+// Editable accumulating transcript for the complaint phase. The textarea
+// is bound to a controlled state (complaintDraft) that the parent grows
+// on each finalised utterance via the onEvent handler. Patient can edit
+// the text directly to fix STT mistranscriptions before tapping Send.
+// While the mic is hot, the latest interim partial appears below the
+// textarea as a soft preview — landed text appears in the textarea
+// proper once Deepgram finalises that segment.
+function ComplaintEditor({ value, onChange, interim, recording, speaking }) {
+  const interimVisible =
+    !!interim &&
+    interim.trim().length > 0 &&
+    !value.toLowerCase().endsWith(interim.toLowerCase().trim());
+  return (
+    <div className="vic-glass" style={{
+      width: "100%", padding: 24, borderRadius: 24,
+      border: "1px solid rgba(47, 217, 244, 0.2)",
+      boxShadow: "0 32px 64px -12px rgba(0, 0, 0, 0.5)",
+      display: "flex", flexDirection: "column", gap: 12,
+    }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "baseline",
+      }}>
+        <span style={{
+          fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.2em", color: "rgba(47, 217, 244, 0.7)",
+        }}>
+          Your concern · editable
+        </span>
+        <span style={{
+          fontSize: 10, color: "var(--vic-on-surface-variant)",
+          fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em",
+        }}>
+          {recording ? "● mic on — keep talking, or fix any words below" : speaking ? "speaking…" : "tap mic when ready"}
+        </span>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="When you start speaking, what you say will appear here. You can edit any of it before you send."
+        spellCheck
+        style={{
+          width: "100%",
+          minHeight: 140,
+          padding: "14px 16px",
+          background: "rgba(12, 19, 36, 0.55)",
+          border: "1px solid rgba(47, 217, 244, 0.18)",
+          borderRadius: 12,
+          color: "var(--vic-on-surface)",
+          fontFamily: "'Inter', system-ui, sans-serif",
+          fontSize: 17,
+          lineHeight: 1.5,
+          resize: "vertical",
+          outline: "none",
+          boxSizing: "border-box",
+        }}
+      />
+      {interimVisible && (
+        <div style={{
+          fontSize: 14, color: "var(--vic-on-surface-variant)",
+          fontStyle: "italic", padding: "0 4px",
+          opacity: 0.85,
+        }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+            color: "rgba(47, 217, 244, 0.55)", letterSpacing: "0.18em",
+            marginRight: 8, textTransform: "uppercase",
+          }}>hearing</span>
+          {interim}
+          <span className="vic-typing-cursor" />
+        </div>
+      )}
     </div>
   );
 }
