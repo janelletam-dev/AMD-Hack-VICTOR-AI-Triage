@@ -20,6 +20,8 @@ from agents import swarm
 from config import settings
 from engine.concordance import engine as concordance_engine
 from engine.concordance import detect_emergency, detect_safety_escalation
+from services.clinical_knowledge import compute_clinical_heart, is_chest_pain
+from services.coverage_tracker import extract_covered, extract_negatives, priority_order
 from services.deepgram_service import DeepgramService, Transcript
 from services.event_bus import bus
 from services.thymia_service import (
@@ -42,6 +44,27 @@ MAX_COMPLAINT_FRAMES = 3000
 HELIOS_REFRESH_EVERY_N_TURNS = 2
 
 log = logging.getLogger("victor.audio_ws")
+
+
+def _age_from_dob_iso(dob_iso: str | None) -> int | None:
+    """Return integer age (years) from an ISO 8601 DOB string, or None
+    if dob is missing/malformed. Used to feed SCRIBE the patient's age
+    so the HPI paragraph opens correctly ("47-year-old female presenting
+    with…") instead of generic "patient presenting with…".
+    """
+    if not dob_iso or not isinstance(dob_iso, str):
+        return None
+    try:
+        from datetime import date
+        y, m, d = (int(p) for p in dob_iso.split("-")[:3])
+        today = date.today()
+        age = today.year - y - (
+            (today.month, today.day) < (m, d)
+        )
+        return age if 0 <= age < 150 else None
+    except (ValueError, TypeError):
+        return None
+
 
 router = APIRouter()
 
@@ -109,6 +132,10 @@ async def audio_ws(
         "dob_iso": None,                    # captured DOB in ISO 8601
         "complaint_pcm": [],                # PCM16 frames during the complaint phase
         "latest_final_transcript": "",      # for concordance evaluation
+        "complaint_text": "",               # full chief complaint from identity_update — used as J.A.C.K.I.E.'s seed so the follow-up isn't asking the same opening question the patient just answered
+        "gender": None,                     # captured from identity_update; used to bias coverage priority (LMP for female + abdominal pain, etc.)
+        "pertinent_negatives": [],          # explicit denials from the patient ("no SOB", "denies radiation"); woven into the SCRIBE HPI paragraph for chart completeness — pertinent negatives rule out can't-miss diagnoses
+        "heart_score": None,                # clinical (pre-EKG, pre-troponin) HEART score for chest-pain cases; recomputed each turn as PMH and classical features surface
         "helios_submitted": False,          # one Helios run per session
         "helios_lang": "en-US",             # default; updated from Deepgram language
         # J.A.C.K.I.E. follow-up loop state
@@ -260,17 +287,16 @@ async def audio_ws(
                 state["safety_escalated"] = True
                 asyncio.create_task(handle_safety_escalation(safety, t.text, t.language or "en"))
 
-        # During the J.A.C.K.I.E. follow-up loop, every finalised patient
-        # utterance triggers the next turn.
-        if (
-            t.is_final
-            and t.text
-            and state["phase"] == "conversation"
-            and not state["jackie_busy"]
-            and not state["emergency_fired"]
-            and state["jackie_turn_count"] < state["jackie_max_turns"]
-        ):
-            asyncio.create_task(jackie_turn(t.text, t.language or "en"))
+        # During the conversation phase the kiosk now uses an editable
+        # textarea (same pattern as the complaint phase) — the patient
+        # speaks, the transcript lands in the textarea, they edit any
+        # mistranscriptions, then tap Send. The Send tap fires a
+        # `conversation_answer` event (handled below) which is the
+        # canonical commit signal. We DO NOT auto-trigger jackie_turn
+        # on every finalised transcript anymore — that was the old
+        # read-only TranscriptCard pattern and it bypassed the patient's
+        # ability to correct STT errors before J.A.C.K.I.E. reasons
+        # against them.
 
     async def handle_emergency(em, utterance: str, language: str) -> None:
         """Patient said an explicit emergency phrase. Force ESI-1, emit a
@@ -399,10 +425,72 @@ async def audio_ws(
                     },
                 },
             )
+            # Pass the conversation history (and chief complaint as the
+            # seed turn) so J.A.C.K.I.E. has full context and doesn't
+            # ask questions the patient already answered. Snapshot the
+            # history list before passing — we mutate it after the
+            # response, and we don't want a half-built turn in scope.
+            #
+            # Compute coverage from ALL patient utterances seen so far
+            # (history + chief complaint + the just-spoken utterance).
+            # Coverage tracker is a regex-based extractor — see
+            # services/coverage_tracker.py. The result tells JACKIE
+            # which OPQRST/SAMPLE elements have been answered and what
+            # to ask next, biased by chief-complaint priority.
+            history_snapshot = list(state["jackie_history"])
+            coverage_input = list(history_snapshot)
+            if state.get("complaint_text"):
+                coverage_input.append({"role": "patient", "text": state["complaint_text"]})
+            if patient_utterance:
+                coverage_input.append({"role": "patient", "text": patient_utterance})
+            covered = extract_covered(coverage_input)
+            negatives = extract_negatives(coverage_input)
+            # Recompute the clinical HEART score against the full
+            # accumulated transcript (chief complaint + every patient
+            # turn so far). Risk factors and history score will tend
+            # to grow as the patient surfaces more PMH ("oh, I have
+            # diabetes too") and as classical features emerge in
+            # follow-ups. Only published if the chief complaint is
+            # cardiac in the first place.
+            if is_chest_pain(state.get("complaint_text")):
+                full_text_for_heart = " ".join(
+                    h.get("text", "")
+                    for h in coverage_input
+                    if h.get("role") == "patient"
+                )
+                heart = compute_clinical_heart(
+                    full_text_for_heart,
+                    _age_from_dob_iso(state.get("dob_iso")),
+                )
+                state["heart_score"] = heart
+                await bus.publish(room, {
+                    "type": "risk_score",
+                    "data": {"score": "HEART", **heart},
+                })
+            remaining = priority_order(
+                state.get("complaint_text"),
+                state.get("gender"),
+                covered,
+            )
+            # Stash negatives on session state so SCRIBE (and the
+            # eventual SOAP / HPI rendering) can weave them into the
+            # paragraph as "denies X, denies Y" — rules out can't-miss
+            # diagnoses.
+            state["pertinent_negatives"] = negatives
+            log.info(
+                "jackie coverage: covered=%s negatives=%s remaining=%s cc=%r gender=%r",
+                sorted(covered), negatives, remaining[:4],
+                (state.get("complaint_text") or "")[:60],
+                state.get("gender"),
+            )
             text = await swarm.jackie.respond(
                 patient_utterance,
                 language=language,
                 escalated=state["escalated"],
+                history=history_snapshot,
+                chief_complaint=state.get("complaint_text") or None,
+                coverage_covered=covered,
+                coverage_remaining=remaining,
             )
             state["jackie_history"].append({"role": "patient", "text": patient_utterance})
             state["jackie_history"].append({"role": "jackie", "text": text})
@@ -524,6 +612,10 @@ async def audio_ws(
                 transcript=state["latest_final_transcript"],
                 biomarkers={},
                 chief_complaint_label=None,
+                chief_complaint_text=state.get("complaint_text"),
+                pertinent_negatives=state.get("pertinent_negatives") or [],
+                gender=state.get("gender"),
+                age=_age_from_dob_iso(state.get("dob_iso")),
             )
             return
 
@@ -563,6 +655,10 @@ async def audio_ws(
             transcript=state["latest_final_transcript"],
             biomarkers={"helios": helios_block},
             chief_complaint_label=(flags[0].triage_label if flags else None),
+            chief_complaint_text=state.get("complaint_text"),
+            pertinent_negatives=state.get("pertinent_negatives") or [],
+            gender=state.get("gender"),
+            age=_age_from_dob_iso(state.get("dob_iso")),
         )
 
     # Re-run for biomarker refinement only — does NOT re-run concordance
@@ -675,7 +771,14 @@ async def audio_ws(
                     log.warning("non-JSON text from client: %r", text[:120])
                     continue
                 ptype = payload.get("type")
-                log.info("client control: %s", ptype)
+                # Include the payload for phase / identity_update events so
+                # we can see exactly which transition the kiosk is in (helps
+                # debug "stuck on X phase" reports without instrumenting the
+                # frontend).
+                if ptype in ("phase", "identity_update"):
+                    log.info("client control: %s data=%s", ptype, payload.get("data"))
+                else:
+                    log.info("client control: %s", ptype)
                 # Forward identity / phase events to subscribers (clinician + EMR).
                 if ptype in ("identity_update", "phase"):
                     await bus.publish(room, payload)
@@ -691,12 +794,44 @@ async def audio_ws(
                             asyncio.create_task(submit_helios_and_evaluate())
                         )
                     # Entering the conversation phase → kick off J.A.C.K.I.E.
-                    # against the captured chief complaint.
+                    # against the captured chief complaint. Prefer the
+                    # full complaint text (committed via identity_update
+                    # from the editable textarea, includes every
+                    # sentence the patient said) over the latest single
+                    # final transcript — the latter would feed J.A.C.K.I.E.
+                    # only the patient's last utterance and cause her
+                    # to re-open with "what brought you in today?"
+                    # because she'd have no context for what they said.
                     if new_phase == "conversation" and state["jackie_turn_count"] == 0:
-                        seed = state["latest_final_transcript"] or "the patient's chief complaint"
+                        seed = (
+                            state["complaint_text"]
+                            or state["latest_final_transcript"]
+                            or "the patient's chief complaint"
+                        )
                         helios_tasks.append(asyncio.create_task(
                             jackie_turn(seed, language=state["helios_lang"].split("-")[0])
                         ))
+
+                # Patient tapped Send on the conversation-phase editable
+                # textarea — fire J.A.C.K.I.E.'s next turn against the
+                # (possibly hand-corrected) full text. This replaces the
+                # old transcript-final auto-trigger so STT mistranscriptions
+                # don't poison J.A.C.K.I.E.'s reasoning. We still respect
+                # turn count, busy guard, and emergency state.
+                if ptype == "conversation_answer":
+                    answer_data = payload.get("data") or {}
+                    answer_text = (answer_data.get("text") or "").strip()
+                    answer_lang = answer_data.get("language") or state["helios_lang"].split("-")[0]
+                    if (
+                        answer_text
+                        and state["phase"] == "conversation"
+                        and not state["jackie_busy"]
+                        and not state["emergency_fired"]
+                        and state["jackie_turn_count"] < state["jackie_max_turns"]
+                    ):
+                        helios_tasks.append(
+                            asyncio.create_task(jackie_turn(answer_text, answer_lang))
+                        )
 
                 # Capture the confirmed DOB from identity_update so Helios
                 # can include it on the model run. Also detect minor patients.
@@ -709,6 +844,64 @@ async def audio_ws(
                             state["dob_iso"] = iso
                     if id_data.get("is_minor"):
                         state["is_minor"] = True
+                    # Capture the full chief complaint when the kiosk
+                    # commits the complaint phase (the textarea contents,
+                    # which may span multiple sentences after edits). This
+                    # is what J.A.C.K.I.E. should reason about — using
+                    # latest_final_transcript instead would only give
+                    # her the patient's last sentence, which causes her
+                    # to re-ask the chief-complaint question because she
+                    # has no context for what the patient just said.
+                    complaint = id_data.get("complaint")
+                    if complaint and isinstance(complaint, str) and complaint.strip():
+                        state["complaint_text"] = complaint.strip()
+                        # If the chief complaint suggests cardiac, compute
+                        # a clinical (pre-EKG, pre-troponin) HEART score
+                        # right at intake. The clinician sees a risk-strat
+                        # number on the chart while ECG and troponin are
+                        # being ordered — anchors expectations early.
+                        # Score updates as the conversation accumulates
+                        # (we recompute on every J.A.C.K.I.E. turn below).
+                        if is_chest_pain(complaint):
+                            heart = compute_clinical_heart(
+                                complaint,
+                                _age_from_dob_iso(state.get("dob_iso")),
+                            )
+                            state["heart_score"] = heart
+                            asyncio.create_task(bus.publish(room, {
+                                "type": "risk_score",
+                                "data": {"score": "HEART", **heart},
+                            }))
+                        # Fire SCRIBE's chief-complaint distillation in the
+                        # background. Result lands as a follow-up
+                        # identity_update with a `chief_complaint_short`
+                        # field so the clinician dashboard can render a
+                        # clean chart-header line ("Chest pain x 24h")
+                        # instead of the patient's full narrative. Doesn't
+                        # block the SOAP / Helios / J.A.C.K.I.E. paths.
+                        async def _distill_and_publish(text: str) -> None:
+                            try:
+                                short = await swarm.scribe.summarize_cc(text)
+                            except Exception:
+                                log.exception("scribe summarize_cc raised")
+                                return
+                            if not short:
+                                return
+                            state["complaint_short"] = short
+                            await bus.publish(room, {
+                                "type": "identity_update",
+                                "data": {"chief_complaint_short": short},
+                            })
+                        helios_tasks.append(
+                            asyncio.create_task(_distill_and_publish(complaint.strip()))
+                        )
+                    # Capture sex assigned at birth — it biases the
+                    # coverage-tracker priority list (e.g. abdominal
+                    # pain in a female-bodied patient front-loads LMP
+                    # for the ectopic-pregnancy can't-miss).
+                    gender = id_data.get("gender")
+                    if gender and isinstance(gender, str) and gender.strip():
+                        state["gender"] = gender.strip()
                     # Non-verbal patient: skip voice triage entirely.
                     if id_data.get("non_verbal"):
                         await bus.publish(room, {

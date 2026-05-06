@@ -405,10 +405,24 @@ def _extract_transcript(payload: dict[str, Any]) -> tuple[str | None, str | None
                 confidence = float(alt.get("confidence", 1.0))
                 return text, lang, is_final, confidence
 
-    # Shape 2 — Flux flat: payload.transcript / payload.text
+    # Shape 2 — Flux v2 TurnInfo: payload.transcript / payload.text with
+    # an "event" discriminator instead of an is_final boolean. The
+    # documented event values are:
+    #   "Update"           — interim partial within a turn
+    #   "EagerEndOfTurn"   — provisional final (only if eager threshold set)
+    #   "EndOfTurn"        — committed final at end of turn
+    # Older Nova v1 payloads use is_final directly; we honour both so this
+    # extractor is forwards/backwards compatible.
     text = payload.get("transcript") or payload.get("text")
     if isinstance(text, str) and text:
         confidence = float(payload.get("confidence", 1.0))
-        return text, payload.get("language"), bool(payload.get("is_final")), confidence
+        event = payload.get("event")
+        if event in ("EndOfTurn", "EagerEndOfTurn"):
+            is_final_flag = True
+        elif event == "Update":
+            is_final_flag = False
+        else:
+            is_final_flag = bool(payload.get("is_final"))
+        return text, payload.get("language"), is_final_flag, confidence
 
     return None, None, False, 1.0

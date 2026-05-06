@@ -8,9 +8,15 @@
 
 import { useEffect, useState } from "react";
 
-const FIELDS = ["name", "dob", "complaint"];
+// `chief_complaint_short` is the SCRIBE-distilled clinician-shorthand
+// version of the complaint (e.g. "Chest pain x 24h"). Renders as the
+// "Reason for visit" header on the clinician dashboard. The full
+// patient narrative stays available via the verbatim accordion.
+// `gender` is sex assigned at birth (Female / Male) — drives some of
+// JACKIE's coverage priorities and shows on the chart demographics.
+const FIELDS = ["name", "dob", "complaint", "chief_complaint_short", "gender"];
 
-let _state = { name: "", dob: "", complaint: "" };
+let _state = { name: "", dob: "", complaint: "", chief_complaint_short: "", gender: "" };
 let _original = null;
 const _subs = new Set();
 

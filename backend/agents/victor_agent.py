@@ -100,6 +100,10 @@ class VictorAgent:
         transcript: str,
         biomarkers: dict,
         chief_complaint_label: str | None = None,
+        chief_complaint_text: str | None = None,
+        pertinent_negatives: list[str] | None = None,
+        gender: str | None = None,
+        age: int | None = None,
     ) -> None:
         """Run the post-Helios pipeline:
             1. M.E.R.C.E.D. glosses each flag → publish concordance_flag events
@@ -107,9 +111,18 @@ class VictorAgent:
             3. S.C.R.I.B.E. updates SOAP → publish soap_update event
         Each step also emits agent_activity for the swarm panel.
         """
+        # Bundle the optional patient context into a single dict that
+        # threads through the SOAP update — keeps _scribe_step's
+        # signature small while letting SCRIBE compose a real HPI.
+        patient_ctx = {
+            "chief_complaint_text": chief_complaint_text,
+            "pertinent_negatives": pertinent_negatives or [],
+            "gender": gender,
+            "age": age,
+        }
         if not flags:
             # No concordance — still update SOAP from transcript + biomarkers.
-            await self._scribe_step(room, transcript, biomarkers, [], None)
+            await self._scribe_step(room, transcript, biomarkers, [], None, patient_ctx)
             return
 
         # 1. Glossify each flag in parallel.
@@ -162,7 +175,7 @@ class VictorAgent:
         await self._activity(room, self.name, "idle", f"ESI {esi['standard']} → {esi['adjusted']}")
 
         # 3. SOAP update.
-        await self._scribe_step(room, transcript, biomarkers, flag_dicts, esi)
+        await self._scribe_step(room, transcript, biomarkers, flag_dicts, esi, patient_ctx)
 
     async def _scribe_step(
         self,
@@ -171,16 +184,24 @@ class VictorAgent:
         biomarkers: dict,
         flags: list[dict],
         esi: dict | None,
+        patient_ctx: dict | None = None,
     ) -> None:
         await self._activity(room, self.scribe.name, "active", "Updating SOAP note")
-        note = await self.scribe.update(
-            {
-                "transcript": transcript,
-                "biomarkers": biomarkers,
-                "flags": flags,
-                "esi": esi or {},
-            }
-        )
+        # Merge patient_ctx (chief complaint text, pertinent negatives,
+        # demographics) into the SCRIBE context so the Subjective field
+        # is composed as a real HPI paragraph with positives + negatives
+        # — see prompts/scribe_system.txt for the format spec.
+        ctx = {
+            "transcript": transcript,
+            "biomarkers": biomarkers,
+            "flags": flags,
+            "esi": esi or {},
+        }
+        if patient_ctx:
+            for k, v in patient_ctx.items():
+                if v is not None and v != [] and v != "":
+                    ctx[k] = v
+        note = await self.scribe.update(ctx)
         await bus.publish(
             room,
             {

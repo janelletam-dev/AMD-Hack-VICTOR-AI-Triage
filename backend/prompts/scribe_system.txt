@@ -14,7 +14,28 @@ OUTPUT FORMAT — STRICT JSON
 `plan` MUST be an array of short action strings. Everything else is a single string.
 
 SECTIONS
-- Subjective: Patient's own words, paraphrased to clinical narrative. Quote direct phrases sparingly. Include onset, character, location, severity, timing, modifying factors when known.
+- Subjective: a real ED HPI (history of present illness) paragraph — the
+  kind a triage nurse or attending writes in the chart. Format and rules:
+  * Open with demographics + chief complaint when known:
+    "Mr. Smith is a 47-year-old male presenting with…"
+    "47F c/o chest pain x 24h…" (telegraphic shorthand also acceptable)
+  * Cover Bates' 7 dimensions of a symptom when the patient has answered
+    them: location, quality, quantity/severity, timing (onset/duration/
+    course), setting (where/what doing when it started), modifying
+    factors (aggravating + alleviating), associated manifestations.
+  * Pertinent positives AND pertinent negatives. Negatives are not
+    filler — they actively rule out can't-miss diagnoses. The context
+    object includes a `pertinent_negatives` array listing what the
+    patient explicitly denied; weave these inline:
+      "+SOB, +diaphoresis; denies radiation, denies n/v."
+      "Denies prior similar episodes. No fever, no recent travel."
+  * Include relevant PMH / meds / allergies inline if the patient
+    surfaced them; otherwise leave them for those sections in a longer
+    note (this is triage, not a full H&P).
+  * Direct quotes sparingly — use only when the exact phrasing matters
+    clinically ("describes pain as 'crushing'").
+  * Never include a diagnosis or differential here — that goes in
+    Assessment. Subjective is the patient's story, structured.
 - Objective: thymia Helios voice biomarker scores. Use the canonical field names: stress, distress, mentalStrain, exhaustion, sleepPropensity, lowSelfEsteem. Format: "Helios — stress 0.66, distress 0.66, mental strain 0.68, exhaustion 0.33." Include any vitals the patient mentions.
 - Assessment: M.E.R.C.E.D. concordance flags + V.I.C.T.O.R.'s reasoning. Lead with the highest-tier flag. State the differential implication ("atypical CVD presentation", "consider ACS").
 - Plan: array of V.I.C.T.O.R.'s recommended next steps as short action items, e.g. ["Bedside 12-lead ECG", "Stat troponin", "Telemetry monitoring", "Cardiology consult if elevated"].

@@ -107,6 +107,76 @@ class ScribeAgent:
             log.info("scribe fallback (LLM unavailable): %s", e)
             return self._fallback_update(context)
 
+    async def summarize_cc(self, complaint: str) -> str:
+        """Distil a free-text complaint into a clinician-shorthand chief
+        complaint line, e.g. "I've had this terrible chest pain for the
+        last day, it kind of feels like pressure" → "Chest pain × 24h,
+        pressure-like".
+
+        Used by the clinician dashboard's IdentityCard so the "Reason for
+        visit" header reads like a real ED chart entry instead of a
+        verbatim narrative. The full patient narrative remains
+        available verbatim via the dashboard's accordion. Latency
+        budget: <1s — small max_tokens, no JSON parsing.
+
+        Returns "" on LLM failure; the dashboard falls back to a
+        truncated raw complaint in that case.
+        """
+        if not complaint or not complaint.strip():
+            return ""
+        try:
+            user = (
+                "Distill this patient complaint into a single chief-complaint "
+                "line in clinician shorthand (the kind of line that goes in "
+                "the ED chart header). Keep it under 8 words. Use clinical "
+                "abbreviations where appropriate (e.g. 'x 24h', 'SOB', "
+                "'RLQ'). Do NOT add a diagnosis — just describe what the "
+                "patient came in for. Output the line ONLY, no preamble, "
+                "no quotes.\n\n"
+                "Examples:\n"
+                "  Patient: \"I've had this terrible chest pain for the "
+                "last day, it kind of feels like pressure\"\n"
+                "  → Chest pain x 24h, pressure-like\n"
+                "  Patient: \"My belly really hurts on the right side\"\n"
+                "  → Abd pain RLQ\n"
+                "  Patient: \"I'm short of breath when I walk up stairs\"\n"
+                "  → SOB on exertion\n"
+                "  Patient: \"I have the worst headache of my life\"\n"
+                "  → Severe headache, sudden onset\n\n"
+                f"Patient: {complaint.strip()!r}\n  →"
+            )
+            text = await self.llm.chat(
+                [
+                    ChatMessage(
+                        role="system",
+                        content=(
+                            "You are a clinical scribe distilling patient "
+                            "complaints into ED chart-header chief-complaint "
+                            "lines. Be terse and clinical."
+                        ),
+                    ),
+                    ChatMessage(role="user", content=user),
+                ],
+                temperature=0.1,
+                max_tokens=30,
+            )
+            short = (text or "").strip().strip('"').strip("`").strip()
+            # Strip leading "→" or "->" the model might echo from the prompt.
+            short = re.sub(r"^[\-→>]+\s*", "", short)
+            # First line only — sometimes the model adds a follow-up.
+            short = short.split("\n", 1)[0].strip()
+            # Hard cap so a verbose model doesn't pollute the chart header.
+            if len(short) > 80:
+                short = short[:77].rstrip() + "..."
+            return short
+        except (LLMUnavailable, ValueError) as e:
+            log.info("scribe summarize_cc fallback (LLM unavailable): %s", e)
+            # Fallback: take the first sentence, capped at 60 chars.
+            first = re.split(r"[.!?\n]", complaint.strip(), maxsplit=1)[0].strip()
+            if len(first) > 60:
+                first = first[:57].rstrip() + "..."
+            return first
+
     # Cap the subjective section to prevent infinite appending when patient talks a lot.
     MAX_SUBJECTIVE_CHARS = 800
 

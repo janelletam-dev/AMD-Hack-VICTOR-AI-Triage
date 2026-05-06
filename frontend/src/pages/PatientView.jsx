@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { Clock, MessageCircle, Gauge, Flag, Venus, Mars, Transgender, Minus, Mic } from "lucide-react";
+import { Clock, MessageCircle, Gauge, Flag, Venus, Mars } from "lucide-react";
 import VoiceSelector from "../components/VoiceSelector.jsx";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import { useAudioCapture } from "../hooks/useAudioCapture.js";
@@ -56,10 +56,16 @@ function phaseTTS(voice, phase) {
     case "gender":
       // Button-driven, not voice-driven. Voice prompt names the options
       // out loud so visually-impaired patients can hear them; the kiosk
-      // shows the buttons regardless. Phrasing keeps clinical purpose
-      // ("identify you on your chart") and avoids loaded "what gender are
-      // you" wording that some patients react to.
-      return `One quick thing — for your chart, how would you like to be identified? Tap female, male, non-binary, or prefer not to say.`;
+      // shows the buttons regardless.
+      //
+      // Sex assigned at birth (not gender identity) is the clinically
+      // load-bearing field for ED triage: it changes differential
+      // diagnosis priors (chest pain in F vs M), drug dosing, lab
+      // reference ranges (Hgb / Cr / troponin), and imaging protocols
+      // (pregnancy gating). Per HL7 FHIR + Joint Commission, sex at
+      // birth and gender identity are separate fields — for a 5-min
+      // demo we capture only the clinically required one.
+      return `One quick thing — for accurate clinical decisions, what was your sex at birth? Tap female or male.`;
     case "complaint":
       // Open-ended phrasing invites a multi-sentence narrative, not a
       // one-liner. Helios voice biomarkers need ~15s of audio to be
@@ -84,7 +90,10 @@ function phasePrompt(phase) {
     case "dob":
       return { label: "Step 3 of 6", title: "And your date of birth?" };
     case "gender":
-      return { label: "Step 4 of 6", title: "How would you like to be identified?" };
+      // "Sex assigned at birth" is the clinically load-bearing label —
+      // see phaseTTS comment for rationale. Capturing this (not gender
+      // identity) is what the ED triage agents actually need.
+      return { label: "Step 4 of 6", title: "What was your sex assigned at birth?" };
     case "complaint":
       return {
         label: "Step 5 of 6",
@@ -367,7 +376,13 @@ function parseDOB(raw) {
     return { ok: false, message: "That date doesn't look right. Please try again." };
   }
 
-  // 2) Word month: "January 15 1980", "15 January 1980", "Jan 15th, 1980"
+  // 2) Word month: "January 15 1980", "15 January 1980", "Jan 15th, 1980".
+  // Also accept partials: year+month (no day) and year-only — drop the
+  // patient into the editable date picker with a sensible starting
+  // value rather than rejecting the whole utterance. STT misses days
+  // constantly ("April 1990" was the original failure case in testing)
+  // and forcing the patient to repeat the entire DOB wastes time when
+  // we got most of it right.
   const monthRe = new RegExp(
     `\\b(${Object.keys(MONTH_WORDS).join("|")})\\b`,
     "i"
@@ -380,6 +395,19 @@ function parseDOB(raw) {
     const y = parseInt(yearMatch[1], 10);
     const d = parseInt(dayMatch[1], 10);
     if (isValidYMD(y, m, d)) return { ok: true, value: formatYMD(y, m, d) };
+  }
+  // Partial: month + year, no day → default to day 1 and let the
+  // patient adjust in the date picker. partial=true so the caller can
+  // optionally surface a hint like "I caught April 1990 — pick the day".
+  if (mw && yearMatch) {
+    const m = MONTH_WORDS[mw[1].toLowerCase()];
+    const y = parseInt(yearMatch[1], 10);
+    if (isValidYMD(y, m, 1)) return { ok: true, value: formatYMD(y, m, 1), partial: true };
+  }
+  // Partial: year only → default to Jan 1.
+  if (yearMatch) {
+    const y = parseInt(yearMatch[1], 10);
+    if (isValidYMD(y, 1, 1)) return { ok: true, value: formatYMD(y, 1, 1), partial: true };
   }
 
   return { ok: false, message: "I didn't get a valid date — please say it like January 15, 1980." };
@@ -423,7 +451,18 @@ function isMinorFromDOB(dobValue) {
 }
 
 export default function PatientView() {
+  // step = "welcome" | "nurse" | "select" | "verify" | "interview" | "done"
+  // The "nurse" + "verify" steps are an optional fast-path: a triage nurse
+  // who already knows the patient (e.g. arrived by ambulance, EMR pull,
+  // returning patient) types name + DOB up-front, then the patient just
+  // confirms "yes that's me" with a single tap and skips straight to the
+  // sex-at-birth question. Skipping voice name/DOB capture removes the
+  // single biggest source of friction in the kiosk flow (mishears,
+  // spelling fallback, DOB parsing).
   const [step, setStep] = useState("welcome");
+  // Nurse-supplied identity, holds first_name / last_name / dob until
+  // the patient confirms or rejects on the verify screen.
+  const [prefill, setPrefill] = useState(null);
   const [voice, setVoice] = useState(null);
   const [room] = useState(() => {
     const url = new URL(window.location.href);
@@ -460,9 +499,6 @@ export default function PatientView() {
   // gets a soft "I'm still here, take your time" cue BEFORE the silence
   // timer commits at 2500ms. Cleared on every new partial.
   const [stillListening, setStillListening] = useState(false);
-  // Gender phase: when the patient picks "Other" we switch from the 4-card
-  // picker to mic mode (the patient speaks freely). Cleared on phase change.
-  const [genderOtherMode, setGenderOtherMode] = useState(false);
   const lastTranscriptUpdateAtRef = useRef(0);
   const stillListeningTimerRef = useRef(null);
   // Editable accumulating transcript for the complaint phase. Each
@@ -472,6 +508,11 @@ export default function PatientView() {
   // Other phases stay on the captured/interim model because their
   // answers are short.
   const [complaintDraft, setComplaintDraft] = useState("");
+  // Per-turn editable answer for the conversation phase. Same pattern
+  // as complaintDraft — finals append and the patient can edit before
+  // tapping Send. Resets to "" each time J.A.C.K.I.E. asks a new
+  // question so the box is always fresh for the patient's reply.
+  const [conversationDraft, setConversationDraft] = useState("");
   // Track how many times the patient has retried the last_name phase.
   // After 2 failures we skip and let the clinician fill it in via the
   // editable identity card. Avoids derailing the demo on a hard surname.
@@ -511,6 +552,13 @@ export default function PatientView() {
   const confirmRef = useRef(null);
   const spellingModeRef = useRef(false);
   const audioRef = useRef(null);
+  // AbortController tracking in-flight TTS fetches so a fresh playTTS
+  // call can hard-cancel anything stale before issuing its own request.
+  // Without this, a previous fetch resolving late can stomp audioRef
+  // with the wrong audio object and either play overlapping prompts or
+  // break the ended-event chain that drives mic auto-start (the smoking
+  // gun for the gender → complaint stall reported during testing).
+  const ttsAbortRef = useRef(null);
   const ttsStateRef = useRef("idle");
 
   const onEvent = useCallback((evt) => {
@@ -553,6 +601,11 @@ export default function PatientView() {
       phaseTextRef.current = "";
       lastFinalRef.current = "";
       setInterimText("");
+      // New JACKIE question → clear the conversation textarea so the
+      // patient sees a fresh empty box for their answer (same UX
+      // pattern as the complaint phase). Without this the prior
+      // answer would still be displayed and confuse the next turn.
+      setConversationDraft("");
       const fn = playTTSRef.current;
       if (fn) fn(data.text, () => {
         setProcessingState(null);
@@ -669,14 +722,51 @@ export default function PatientView() {
         return `${prev} ${trimmed}`;
       });
     }
-
-    // ───────────── conversation phase: stop mic to free worklet ─────────────
+    // Same accumulation pattern for conversation-phase answers — the
+    // patient can speak across multiple breaths and fix mistranscriptions
+    // in the textarea before tapping Send.
     if (p === "conversation") {
-      setProcessingState("thinking");  // optimistic — backend agent_activity confirms
-      setTimeout(() => {
-        const stopFn = micStopRef.current;
-        if (stopFn) stopFn();
-      }, 80);
+      setConversationDraft((prev) => {
+        const trimmed = text.trim();
+        if (!trimmed) return prev;
+        if (!prev) return trimmed;
+        if (prev.endsWith(trimmed)) return prev;
+        return `${prev} ${trimmed}`;
+      });
+    }
+
+    // Conversation phase used to auto-stop the mic on every final and
+    // fire J.A.C.K.I.E. immediately. That bypassed the patient's
+    // ability to fix STT mistranscriptions before her reasoning ran.
+    // Now we keep the mic open and let the patient tap Send (or
+    // continue speaking) — same pattern as the complaint phase.
+    // The Send tap fires a `conversation_answer` event server-side
+    // (see advancePhase below) which is the canonical commit signal.
+    if (p === "conversation") {
+      // Just exit the final-handler — no mic stop, no auto-trigger.
+      return;
+    }
+
+    // ───────────── final → immediate commit for identity phases ─────────────
+    // Flux v2 emits is_final=True at end of turn (silence ≥ eot_timeout
+    // or confidence ≥ eot_threshold). When that happens for an identity
+    // phase, we don't need to wait for the frontend silence timer too —
+    // the canonical "patient finished" signal already fired. Without
+    // this short-circuit the silence timer was racing finals: it fires
+    // at 1200ms with only the partial in hand, parseDOB choked on the
+    // incomplete partial, and the patient saw an empty editable card
+    // even though the kiosk had captured the date correctly. We give
+    // is_final priority and let the silence timer be a backstop only.
+    if ((p === "first_name" || p === "last_name" || p === "dob") && !confirmRef.current) {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      const commitFn = handleStopMicRef.current;
+      if (commitFn) {
+        // Tiny defer so the state updates above flush before parse runs.
+        setTimeout(() => commitFn(), 30);
+      }
       return;
     }
 
@@ -733,14 +823,28 @@ export default function PatientView() {
       if (typeof onEnded === "function") setTimeout(onEnded, 100);
       return;
     }
+    // Hard-cancel anything already playing AND any fetch still in
+    // flight from a previous playTTS call. The abort path is critical
+    // for fast phase transitions (sex tap → "Got it." → next prompt
+    // all within ~2s): without it, slow fetches resolve out-of-order
+    // and assign their audio object to audioRef AFTER the next prompt
+    // already started, breaking the ended-event chain that auto-starts
+    // the mic. AbortController turns out-of-order resolution into a
+    // clean "AbortError" that we silently ignore.
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
+    if (ttsAbortRef.current) {
+      try { ttsAbortRef.current.abort(); } catch { /* noop */ }
+    }
+    const ac = new AbortController();
+    ttsAbortRef.current = ac;
     const url = `${HTTP_BASE}/api/tts?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
 
     // Try fetching — if server returns fallback JSON, use Web Speech API.
-    fetch(url).then(async (res) => {
+    fetch(url, { signal: ac.signal }).then(async (res) => {
+      if (ac.signal.aborted) return;
       const contentType = res.headers.get("content-type") || "";
       if (contentType.includes("application/json") || res.headers.get("X-TTS-Fallback")) {
         // ElevenLabs unavailable — fall back to browser Web Speech API.
@@ -749,6 +853,7 @@ export default function PatientView() {
       }
       // Normal audio stream — play as before.
       const blob = await res.blob();
+      if (ac.signal.aborted) return;
       const blobUrl = URL.createObjectURL(blob);
       const audio = new Audio(blobUrl);
       audioRef.current = audio;
@@ -764,7 +869,9 @@ export default function PatientView() {
       audio.addEventListener("ended", () => finish("done"));
       audio.addEventListener("error", () => finish("error"));
       audio.play().catch(() => finish("error"));
-    }).catch(() => {
+    }).catch((err) => {
+      // AbortError from .abort() — not a failure, just superseded.
+      if (err && err.name === "AbortError") return;
       // Network error — fall back to Web Speech API.
       speakWithWebSpeechAPI(text, onEnded);
     });
@@ -857,23 +964,68 @@ export default function PatientView() {
 
   const beginInterview = (selected) => {
     setVoice(selected);
-    setStep("interview");
-    setPhaseIdx(0);
-    // first_name + last_name are captured separately, then combined into
-    // `name` once last_name is confirmed (or skipped). Downstream consumers
-    // see only the combined `name` field.
-    setAnswers({ first_name: "", last_name: "", name: "", dob: "", gender: "", complaint: "" });
+    // Branch on whether the nurse pre-filled identity. With prefill we
+    // route through the verify step so the patient can confirm with one
+    // tap; the persona has already been chosen so the verify screen can
+    // greet them by name. Without prefill it's the normal voice flow
+    // starting from first_name.
+    if (prefill) {
+      setStep("verify");
+    } else {
+      setStep("interview");
+      setPhaseIdx(0);
+      // first_name + last_name are captured separately, then combined
+      // into `name` once last_name is confirmed (or skipped). Downstream
+      // consumers see only the combined `name` field.
+      setAnswers({ first_name: "", last_name: "", name: "", dob: "", gender: "", complaint: "" });
+    }
     lastNameAttemptsRef.current = 0;
     phaseTextRef.current = "";
     lastFinalRef.current = "";
     setInterimText("");
     setComplaintDraft("");  // fresh editable textarea for new interview
+    setConversationDraft("");
     setConfirm(null);
     setParseError("");
-    setGenderOtherMode(false);
     // Reset the cross-view store at the start of a new interview.
     clearIdentity();
   };
+
+  // Patient confirmed the nurse-entered identity is correct. Bake the
+  // prefilled values into answers, push them to the dashboard via
+  // identity_update, and jump straight to the sex-at-birth tap (skipping
+  // first_name / last_name / dob phases). PHASES = [first_name,
+  // last_name, dob, gender, ...] so phaseIdx 3 = gender.
+  const confirmPrefill = useCallback(() => {
+    if (!prefill) return;
+    const first = (prefill.first_name || "").trim();
+    const last = (prefill.last_name || "").trim();
+    const fullName = [first, last].filter(Boolean).join(" ");
+    setAnswers({
+      first_name: first,
+      last_name: last,
+      name: fullName,
+      dob: prefill.dob || "",
+      gender: "",
+      complaint: "",
+    });
+    if (send) {
+      if (fullName) send({ type: "identity_update", data: { name: fullName } });
+      if (prefill.dob) send({ type: "identity_update", data: { dob: prefill.dob } });
+    }
+    setStoreIdentity({ name: fullName, dob: prefill.dob || "" });
+    setPhaseIdx(3); // gender (first_name=0, last_name=1, dob=2, gender=3)
+    setStep("interview");
+  }, [prefill, send]);
+
+  // Patient rejected the prefill ("No, that's not me / let me speak").
+  // Clear the override and fall back to the normal voice flow.
+  const rejectPrefill = useCallback(() => {
+    setPrefill(null);
+    setAnswers({ first_name: "", last_name: "", name: "", dob: "", gender: "", complaint: "" });
+    setPhaseIdx(0);
+    setStep("interview");
+  }, []);
 
   // Helper: queue mic auto-restart after a TTS prompt finishes. Used by
   // every commit path so the patient stays hands-free.
@@ -912,25 +1064,18 @@ export default function PatientView() {
       } else {
         const r = parseName(captured);
         if (!r.ok) {
-          setParseError(r.message);
-          // Hard skip path for last_name: after 2 failed attempts, give
-          // up and let the clinician fill it in. Avoids derailing the
-          // demo on a difficult surname.
-          if (phase === "last_name") {
-            lastNameAttemptsRef.current += 1;
-            if (lastNameAttemptsRef.current >= 2) {
-              setConfirm({ phase: "last_name", value: "" });
-              playTTS(
-                "That's okay — we'll skip the last name. The clinician can add it later.",
-                scheduleMicRestart
-              );
-              phaseTextRef.current = "";
-              lastFinalRef.current = "";
-              setInterimText("");
-              return;
-            }
-          }
-          playTTS(phaseRetryTTS(voice, phase), scheduleMicRestart);
+          // Parse failure used to retry-loop with a TTS prompt asking
+          // the patient to repeat themselves — patients hated this
+          // (the "eternal loop"). New behaviour: drop the raw transcript
+          // straight into the editable confirm card so the patient
+          // sees what was heard and can fix it inline (or tap Try
+          // again to re-record). The card's input is the source of
+          // truth; whatever they Send commits.
+          setParseError("");
+          // Best-effort cleanup: title-case the raw text so it looks
+          // like a name even before edits.
+          value = titleCase(captured);
+          setConfirm({ phase, value });
           phaseTextRef.current = "";
           lastFinalRef.current = "";
           setInterimText("");
@@ -940,77 +1085,73 @@ export default function PatientView() {
       }
       setParseError("");
       setConfirm({ phase, value });
-      playTTS(confirmTTS(voice, phase, value), scheduleMicRestart);
+      // No more TTS readback — the editable card is the confirmation.
+      // Keeping audio handoff lightweight so the patient can act fast.
     } else if (phase === "dob") {
       const r = parseDOB(captured);
       if (!r.ok) {
-        setParseError(r.message);
-        playTTS(phaseRetryTTS(voice, phase), scheduleMicRestart);
+        // Parse fail → fall into the editable card with an empty date
+        // input but include `heard` so the card can show "I heard:
+        // 'April 1990'" — patients need to know what was captured,
+        // otherwise it feels like the kiosk dropped their input.
+        setParseError("");
+        setConfirm({ phase: "dob", value: "", heard: captured });
         phaseTextRef.current = "";
         lastFinalRef.current = "";
         setInterimText("");
         return;
       }
       setParseError("");
-      if (r.skipped) {
-        setConfirm({ phase: "dob", value: r.value });
-        playTTS("Okay — skipping that. Moving on.", scheduleMicRestart);
-      } else if (r.fromAge) {
-        setConfirm({ phase: "dob", value: r.value });
-        playTTS(`Around ${r.age} years old — that right?`, scheduleMicRestart);
-      } else {
-        setConfirm({ phase: "dob", value: r.value });
-        playTTS(confirmTTS(voice, "dob", r.value), scheduleMicRestart);
-      }
-    } else if (phase === "gender") {
-      // Voice-mode gender entry (the patient tapped "Other" then spoke).
-      // Take the transcript verbatim, write it to identity, advance.
-      // No confirm card — keeps the flow snappy. If the transcript is
-      // garbled the clinician can edit on the dashboard's identity card.
-      const value = captured.charAt(0).toUpperCase() + captured.slice(1);
-      setAnswers((a) => ({ ...a, gender: value }));
-      setStoreIdentity({ gender: value });
-      send && send({ type: "identity_update", data: { gender: value } });
-      setGenderOtherMode(false);
-      phaseTextRef.current = "";
-      lastFinalRef.current = "";
-      setInterimText("");
-      if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
+      // All branches now flow into the editable card. No TTS readback —
+      // the visible date is the confirmation. `partial: true` (e.g.
+      // year + month, no day) is also passed through so the card can
+      // hint that the day was guessed.
+      setConfirm({ phase: "dob", value: r.value, partial: !!r.partial, heard: r.partial ? captured : null });
     } else {
-      // complaint — keep the text as-is, no confirmation required
+      // complaint — keep the text as-is, no confirmation required.
+      // Sex-at-birth is button-only (no mic), so this branch is never
+      // hit for "gender".
       setAnswers((a) => ({ ...a, complaint: captured }));
     }
   }, [phase, phaseIdx, voice, stop, interimText, playTTS, scheduleMicRestart, send]);
 
-  const onConfirmYes = useCallback(() => {
+  const onConfirmYes = useCallback((overrideValue) => {
     if (!confirm) return;
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
+    // The editable card calls this with the (possibly hand-corrected)
+    // value from its input; voice "yes" calls with no arg, in which
+    // case we fall back to the originally-parsed confirm.value.
+    // last_name allows the empty string explicitly (= skip), so we
+    // accept any string type — only undefined/null falls through.
+    const finalValue = (overrideValue !== undefined && overrideValue !== null)
+      ? overrideValue
+      : confirm.value;
     // Identity propagation: downstream consumers (clinician dashboard,
     // sessionLog, EvidenceReport) see ONE combined `name` field. We only
     // emit `name` after last_name confirms (or last_name is skipped) so
     // the dashboard never shows a half-captured "Janelle" then "Janelle
     // Tamayo" update.
     setAnswers((a) => {
-      const next = { ...a, [confirm.phase]: confirm.value };
+      const next = { ...a, [confirm.phase]: finalValue };
       if (confirm.phase === "last_name") {
-        next.name = `${a.first_name || ""} ${confirm.value}`.trim();
+        next.name = `${a.first_name || ""} ${finalValue}`.trim();
       }
       return next;
     });
     if (confirm.phase === "last_name") {
       // Combine and emit the full name now. If last_name was skipped
       // (value === ""), we still emit just the first name as the `name`.
-      const fullName = `${(answers.first_name || "")} ${confirm.value}`.trim();
+      const fullName = `${(answers.first_name || "")} ${finalValue}`.trim();
       setStoreIdentity({ name: fullName });
       const identityData = { name: fullName };
       send && send({ type: "identity_update", data: identityData });
     } else if (confirm.phase === "dob") {
-      setStoreIdentity({ dob: confirm.value });
-      const identityData = { dob: confirm.value };
-      if (isMinorFromDOB(confirm.value)) identityData.is_minor = true;
+      setStoreIdentity({ dob: finalValue });
+      const identityData = { dob: finalValue };
+      if (isMinorFromDOB(finalValue)) identityData.is_minor = true;
       send && send({ type: "identity_update", data: identityData });
     }
     // first_name confirms hold off on writing to identityStore — we'll
@@ -1021,46 +1162,73 @@ export default function PatientView() {
     setInterimText("");
     phaseTextRef.current = "";
     lastFinalRef.current = "";
-    if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
-    else setStep("done");
-  }, [confirm, phaseIdx, send, answers]);
+    // Persona confirms verbally only on first_name (warm welcome by
+    // name) and the last_name skip path (otherwise the patient sees a
+    // silent jump to DOB after a blank surname). For last_name (with
+    // a value) and DOB, the next phase's prompt IS the acknowledgement
+    // — back-to-back "Got it. Got it. Got it." felt repetitive in
+    // testing, and the next question landing within ~1s gives the
+    // patient enough signal that their input was accepted. The 1500ms
+    // backup timeout guarantees advance even if the TTS audio fails
+    // to fire its "ended" event (race conditions with overlapping
+    // fetches — see selectGender for the same pattern).
+    let ackText = "";
+    if (confirm.phase === "first_name" && finalValue) {
+      ackText = `Got it, ${finalValue}.`;
+    } else if (confirm.phase === "last_name" && !finalValue) {
+      ackText = "Okay — skipping that.";
+    }
+    let advanced = false;
+    const advance = () => {
+      if (advanced) return;
+      advanced = true;
+      if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
+      else setStep("done");
+    };
+    if (ackText) {
+      playTTS(ackText, advance);
+      setTimeout(advance, 1800);
+    } else {
+      // Silent advance — give the next phase's TTS a 150ms beat to
+      // start so the screen transition doesn't feel jolting.
+      setTimeout(advance, 150);
+    }
+  }, [confirm, phaseIdx, send, answers, playTTS]);
 
+  // Try-again button on the editable confirm card: just clear state
+  // and restart the mic. No spelling-mode escalation (the patient can
+  // fix mistranscriptions by typing in the editable input — that's
+  // strictly better UX than letter-by-letter speech), no retry TTS
+  // prompt (the prior phase TTS still rings in the patient's ear and
+  // a second prompt feels like nagging). For last_name we still tick
+  // the attempt counter so the 2-strike skip path remains armed if
+  // the patient hits Try again repeatedly without typing.
   const onConfirmRetry = useCallback(() => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
     const rejectedPhase = confirm?.phase;
-    const wasName = rejectedPhase === "first_name" || rejectedPhase === "last_name";
-    const alreadySpellingMode = spellingModeRef.current;
     setConfirm(null);
     setParseError("");
     setInterimText("");
     phaseTextRef.current = "";
     lastFinalRef.current = "";
+    setSpellingMode(false);
     setAnswers((a) => ({ ...a, [phase]: "" }));
-    // Spell-out fallback: on the FIRST name rejection (either first or
-    // last name), switch to letter-by-letter mode. After one round of
-    // spelling, fall back to the standard retry on subsequent rejections
-    // (avoids infinite spelling loop). For last_name, also count toward
-    // the skip-after-2-failures cap.
     if (rejectedPhase === "last_name") {
       lastNameAttemptsRef.current += 1;
     }
-    if (wasName && !alreadySpellingMode) {
-      setSpellingMode(true);
-      const which = rejectedPhase === "last_name" ? "last" : "first";
-      const promptText = `Sorry — let's spell that out. Your ${which} name, letter by letter.`;
-      playTTS(promptText, scheduleMicRestart);
-    } else {
-      playTTS(phaseRetryTTS(voice, phase), scheduleMicRestart);
-    }
-  }, [phase, voice, playTTS, confirm, scheduleMicRestart]);
+    scheduleMicRestart();
+  }, [phase, confirm, scheduleMicRestart]);
 
   // Gender selection — button-driven, no parse/confirm flow. Saves the
   // value, pushes identity_update to the bus (so dashboard + EMR + report
-  // see it), and advances the phase. Pre-empts any in-flight TTS so the
-  // patient doesn't hear the prompt finish after they've already tapped.
+  // see it), plays a brief verbal acknowledgement, then advances the
+  // phase. Pre-empts any in-flight TTS so the patient doesn't hear the
+  // prompt finish after they've already tapped. The "Got it." beat is
+  // important — without it, the screen jumps to the next prompt with no
+  // confirmation that the tap registered, which feels like a bug.
   const selectGender = useCallback((value) => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -1070,29 +1238,24 @@ export default function PatientView() {
     setAnswers((a) => ({ ...a, gender: value }));
     setStoreIdentity({ gender: value });
     send && send({ type: "identity_update", data: { gender: value } });
-    if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
-  }, [phaseIdx, send]);
-
-  // "Other" tap on the gender picker → switch to mic mode and let the
-  // patient speak. The captured transcript becomes the gender field via
-  // handleStopMic's gender branch (below).
-  const selectGenderOther = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-      setTtsState("idle");
-    }
-    setGenderOtherMode(true);
-    phaseTextRef.current = "";
-    lastFinalRef.current = "";
-    setInterimText("");
-    playTTS("Sure — go ahead, tell me how you'd like to be identified.", () => {
-      setTimeout(() => {
-        const startFn = micStartRef.current;
-        if (startFn) startFn();
-      }, 250);
-    });
-  }, [playTTS]);
+    // Guard against double-advance if both the TTS callback and the
+    // belt-and-suspenders timeout fire — only one should bump phaseIdx.
+    // The timeout is load-bearing: when a long phase prompt is still
+    // mid-fetch when the patient taps, the in-flight fetch can race
+    // with the "Got it." audio and the prompt's audio object can stomp
+    // audioRef.current. The "ended" event for "Got it." may not fire
+    // in that case, leaving advance unwired. The 1500ms timer is a
+    // hard upper bound — "Got it." is a ~500ms clip so the timer
+    // either rubber-stamps a normal advance or rescues a stalled one.
+    let advanced = false;
+    const advance = () => {
+      if (advanced) return;
+      advanced = true;
+      if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
+    };
+    playTTS("Got it.", advance);
+    setTimeout(advance, 1500);
+  }, [phaseIdx, send, playTTS]);
 
   // Text input fallback — when mic is blocked, patient types instead.
   // Simulates a transcript event so the same parsing/confirm flow runs.
@@ -1115,22 +1278,10 @@ export default function PatientView() {
       setConfirm({ phase: "dob", value: r.value });
       if (r.skipped) playTTS("That's okay — we'll skip that.");
       else playTTS(confirmTTS(voice, "dob", r.value));
-    } else if (phase === "gender") {
-      // Mic-blocked fallback path for the "Other" voice-input branch:
-      // patient types instead of speaking. Save + advance directly,
-      // mirroring the handleStopMic gender behaviour.
-      const value = text.charAt(0).toUpperCase() + text.slice(1);
-      setAnswers((a) => ({ ...a, gender: value }));
-      setStoreIdentity({ gender: value });
-      send && send({ type: "identity_update", data: { gender: value } });
-      setGenderOtherMode(false);
-      phaseTextRef.current = "";
-      lastFinalRef.current = "";
-      setInterimText("");
-      if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
     }
     // For complaint/conversation, the text is just captured.
-  }, [phase, phaseIdx, voice, playTTS, send]);
+    // Sex-at-birth is button-only — no text-fallback path needed.
+  }, [phase, voice, playTTS]);
 
   // Bind handler refs AFTER their useCallbacks are declared, so the
   // memoized onEvent closure can call them via ref without TDZ issues.
@@ -1151,6 +1302,26 @@ export default function PatientView() {
         setStoreIdentity({ complaint: text });
         send && send({ type: "identity_update", data: { complaint: text } });
       }
+    } else if (phase === "conversation") {
+      // Conversation phase: same editable-textarea pattern. Commit the
+      // (possibly hand-corrected) draft to the backend via a dedicated
+      // `conversation_answer` event — this is the canonical signal
+      // that fires the next J.A.C.K.I.E. turn server-side. The textarea
+      // is the source of truth; nothing else gets sent. We do NOT
+      // bump phaseIdx — the conversation phase loops in place until
+      // J.A.C.K.I.E. signals triage_complete. The textarea is cleared
+      // when the next jackie_turn event arrives.
+      const text = conversationDraft.trim();
+      if (text) {
+        send && send({
+          type: "conversation_answer",
+          data: { text, language: "en" },
+        });
+        setProcessingState("thinking"); // optimistic — agent_activity confirms
+      }
+      setInterimText("");
+      phaseTextRef.current = "";
+      return;
     } else {
       const captured = (phaseTextRef.current || interimText || "").trim();
       if (captured) {
@@ -1161,7 +1332,7 @@ export default function PatientView() {
     phaseTextRef.current = "";
     if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
     else setStep("done");
-  }, [phase, phaseIdx, stop, interimText, send, complaintDraft]);
+  }, [phase, phaseIdx, stop, interimText, send, complaintDraft, conversationDraft]);
 
   // Patient taps "Restart" on the complaint phase — they realised they
   // want to redo their concern. Clear the captured text, replay the
@@ -1212,8 +1383,47 @@ export default function PatientView() {
         padding: step === "interview" ? "112px 24px 96px" : "96px 24px 96px",
         position: "relative", zIndex: 10,
       }}>
-        {step === "welcome" && <Welcome onBegin={() => setStep("select")} />}
+        {step === "welcome" && (
+          <Welcome
+            onBegin={() => setStep("select")}
+            onNurseEntry={() => setStep("nurse")}
+          />
+        )}
+        {step === "nurse" && (
+          <NurseEntry
+            initial={prefill}
+            onSave={(data) => {
+              setPrefill(data);
+              // If the persona has already been chosen — i.e. nurse
+              // popped this open mid-interview as an override — skip the
+              // persona pick and go straight to verify so the flow feels
+              // like a single uninterrupted handoff. Otherwise it's the
+              // normal welcome → nurse → select → verify path.
+              setStep(voice ? "verify" : "select");
+            }}
+            onCancel={() => {
+              // Mid-interview cancel: drop the in-progress prefill but
+              // keep voice/answers so the patient resumes where they
+              // were. Cold-start cancel: reset everything to welcome.
+              if (voice) {
+                setPrefill(null);
+                setStep("interview");
+              } else {
+                setPrefill(null);
+                setStep("welcome");
+              }
+            }}
+          />
+        )}
         {step === "select" && <VoiceSelector onSelect={beginInterview} />}
+        {step === "verify" && (
+          <VerifyIdentity
+            personaName={personaName}
+            prefill={prefill}
+            onConfirm={confirmPrefill}
+            onReject={rejectPrefill}
+          />
+        )}
         {step === "interview" && (
           <Interview
             voice={voice}
@@ -1235,6 +1445,8 @@ export default function PatientView() {
             stillListening={stillListening}
             complaintDraft={complaintDraft}
             onComplaintDraftChange={setComplaintDraft}
+            conversationDraft={conversationDraft}
+            onConversationDraftChange={setConversationDraft}
             onStart={start}
             onStopMic={handleStopMic}
             onCancel={stop}
@@ -1244,8 +1456,21 @@ export default function PatientView() {
             onConfirmRetry={onConfirmRetry}
             onTextSubmit={handleTextSubmit}
             onSelectGender={selectGender}
-            onSelectGenderOther={selectGenderOther}
-            genderOtherMode={genderOtherMode}
+            // Mid-interview escape hatch: nurse can pop the manual-entry
+            // form open from within the identity phases and short-circuit
+            // the voice flow. Stop the mic + any in-flight TTS first so
+            // we don't keep capturing audio while the form is open and
+            // so the patient doesn't hear the prompt finish in the
+            // background.
+            onNurseOverride={() => {
+              stop();
+              if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current = null;
+                setTtsState("idle");
+              }
+              setStep("nurse");
+            }}
           />
         )}
         {step === "done" && <Done room={room} answers={answers} />}
@@ -1360,7 +1585,7 @@ function Stat({ dot, label }) {
   );
 }
 
-function Welcome({ onBegin }) {
+function Welcome({ onBegin, onNurseEntry }) {
   return (
     <div style={{ maxWidth: 560, width: "100%", textAlign: "center" }}>
       <h1 style={{
@@ -1389,8 +1614,228 @@ function Welcome({ onBegin }) {
       >
         Begin
       </button>
+      {/* Secondary affordance for the triage nurse: if they already have
+          the patient's name and DOB (EMR pull, ambulance handoff,
+          returning patient), they can pre-fill those fields here and
+          the patient just confirms with a single tap. Visually de-
+          emphasised so it doesn't compete with the patient-facing
+          primary CTA. */}
+      {onNurseEntry && (
+        <div style={{ marginTop: 24 }}>
+          <button
+            onClick={onNurseEntry}
+            style={{
+              background: "transparent", border: "none",
+              color: "var(--vic-on-surface-variant)",
+              fontSize: 13, letterSpacing: "0.04em",
+              cursor: "pointer",
+              textDecoration: "underline",
+              textUnderlineOffset: 4,
+              fontFamily: "'JetBrains Mono', monospace",
+              opacity: 0.7,
+            }}
+          >
+            Nurse: I already have their info →
+          </button>
+        </div>
+      )}
     </div>
   );
+}
+
+// Nurse-only fast-path entry. Triage nurse types name + DOB ahead of
+// handing the kiosk to the patient. On save, we route the patient
+// through the verify step (one-tap confirm) instead of the full voice
+// capture, which removes the biggest source of friction in the kiosk
+// flow (mishears, spelling fallback, DOB parsing).
+function NurseEntry({ initial, onSave, onCancel }) {
+  const [first, setFirst] = useState(initial?.first_name || "");
+  const [last, setLast] = useState(initial?.last_name || "");
+  // DOB stored as YYYY-MM-DD via <input type="date"> for unambiguous
+  // entry. Downstream answers.dob expects free-form text the parser
+  // can normalise; ISO is the cleanest format to send.
+  const [dob, setDob] = useState(initial?.dob || "");
+  const canSave = first.trim() && last.trim() && dob;
+  const inputStyle = {
+    width: "100%", padding: "14px 16px",
+    background: "rgba(12, 19, 36, 0.55)",
+    border: "1px solid rgba(47, 217, 244, 0.25)",
+    borderRadius: 12,
+    color: "var(--vic-on-surface)",
+    fontFamily: "'Inter', system-ui, sans-serif",
+    fontSize: 16, outline: "none", boxSizing: "border-box",
+  };
+  const labelStyle = {
+    display: "block",
+    fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+    letterSpacing: "0.18em", color: "rgba(47, 217, 244, 0.7)",
+    marginBottom: 6,
+    fontFamily: "'JetBrains Mono', monospace",
+  };
+  return (
+    <div style={{ maxWidth: 480, width: "100%" }}>
+      <h2 style={{
+        fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+        fontSize: 28, fontWeight: 700, letterSpacing: "-0.01em",
+        color: "var(--vic-on-surface)", marginBottom: 8, textAlign: "center",
+      }}>
+        Nurse-assisted entry
+      </h2>
+      <p style={{
+        color: "var(--vic-on-surface-variant)", fontSize: 14, lineHeight: 1.5,
+        marginBottom: 28, textAlign: "center", fontWeight: 300,
+      }}>
+        Type the patient's identity. They'll just confirm with a tap and
+        skip straight to the clinical questions.
+      </p>
+      <form
+        onSubmit={(e) => { e.preventDefault(); if (canSave) onSave({ first_name: first.trim(), last_name: last.trim(), dob }); }}
+        style={{ display: "flex", flexDirection: "column", gap: 18 }}
+      >
+        <div>
+          <label style={labelStyle} htmlFor="nurse-first">First name</label>
+          <input id="nurse-first" autoFocus value={first} onChange={(e) => setFirst(e.target.value)} style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle} htmlFor="nurse-last">Last name</label>
+          <input id="nurse-last" value={last} onChange={(e) => setLast(e.target.value)} style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle} htmlFor="nurse-dob">Date of birth</label>
+          <input id="nurse-dob" type="date" value={dob} onChange={(e) => setDob(e.target.value)} style={inputStyle} />
+        </div>
+        <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              flex: 1, padding: "14px 0", borderRadius: 999,
+              background: "transparent",
+              color: "var(--vic-on-surface-variant)",
+              border: "1px solid rgba(47, 217, 244, 0.25)",
+              fontSize: 14, fontWeight: 600, cursor: "pointer",
+              letterSpacing: "0.04em",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!canSave}
+            style={{
+              flex: 2, padding: "14px 0", borderRadius: 999,
+              background: canSave
+                ? "linear-gradient(to right, var(--vic-primary), #008ea1)"
+                : "rgba(47, 217, 244, 0.12)",
+              color: canSave ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
+              border: "none", fontSize: 15, fontWeight: 700,
+              cursor: canSave ? "pointer" : "not-allowed",
+              letterSpacing: "0.02em",
+              boxShadow: canSave ? "0 8px 30px rgba(47, 217, 244, 0.3)" : "none",
+            }}
+          >
+            Hand to patient →
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// Verify screen — shown only when nurse pre-filled identity. Patient
+// taps once to confirm "yes that's me" and skips name/DOB voice
+// capture entirely. If they tap "No", we fall back to the normal voice
+// flow starting from first_name. DOB is rendered as a friendly
+// month-day-year line, not raw ISO, so it's readable for a stressed
+// patient.
+function VerifyIdentity({ personaName, prefill, onConfirm, onReject }) {
+  const fullName = [prefill?.first_name, prefill?.last_name].filter(Boolean).join(" ");
+  const dobDisplay = prefill?.dob ? formatDOBHuman(prefill.dob) : "";
+  return (
+    <div style={{ maxWidth: 560, width: "100%", textAlign: "center" }}>
+      <p style={{
+        color: "var(--vic-on-surface-variant)", fontSize: 14, lineHeight: 1.5,
+        marginBottom: 16, fontWeight: 300, letterSpacing: "0.04em",
+        fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase",
+      }}>
+        {personaName} · checking your details
+      </p>
+      <h1 style={{
+        fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+        fontSize: 36, fontWeight: 700, letterSpacing: "-0.01em",
+        color: "var(--vic-on-surface)", marginBottom: 28, lineHeight: 1.25,
+      }}>
+        Hi — I have you down as…
+      </h1>
+      <div style={{
+        padding: "28px 32px", borderRadius: 24,
+        background: "linear-gradient(135deg, rgba(47, 217, 244, 0.08), rgba(0, 142, 161, 0.04))",
+        border: "1px solid rgba(47, 217, 244, 0.25)",
+        marginBottom: 28,
+        display: "flex", flexDirection: "column", gap: 8,
+      }}>
+        <div style={{
+          fontSize: 28, fontWeight: 700, color: "var(--vic-on-surface)",
+          fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+        }}>
+          {fullName || "(name missing)"}
+        </div>
+        {dobDisplay && (
+          <div style={{
+            fontSize: 16, color: "var(--vic-on-surface-variant)",
+            fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
+          }}>
+            born {dobDisplay}
+          </div>
+        )}
+      </div>
+      <p style={{
+        color: "var(--vic-on-surface-variant)", fontSize: 17,
+        marginBottom: 24, fontWeight: 400,
+      }}>
+        Is that right?
+      </p>
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+        <button
+          onClick={onReject}
+          style={{
+            padding: "14px 28px", borderRadius: 999,
+            background: "transparent",
+            color: "var(--vic-on-surface-variant)",
+            border: "1px solid rgba(47, 217, 244, 0.25)",
+            fontSize: 14, fontWeight: 600, cursor: "pointer",
+            letterSpacing: "0.04em",
+          }}
+        >
+          No, let me say it
+        </button>
+        <button
+          onClick={onConfirm}
+          style={{
+            padding: "16px 40px", borderRadius: 999,
+            background: "linear-gradient(to right, var(--vic-primary), #008ea1)",
+            color: "var(--vic-on-primary)", fontWeight: 700, fontSize: 16,
+            border: "none", cursor: "pointer", letterSpacing: "0.02em",
+            boxShadow: "0 8px 30px rgba(47, 217, 244, 0.3)",
+          }}
+        >
+          Yes, that's me →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Render YYYY-MM-DD as a readable "Apr 13, 1990" so a stressed patient
+// can verify at a glance. Falls back to the raw value if parsing fails.
+function formatDOBHuman(iso) {
+  if (!iso || typeof iso !== "string") return iso || "";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const mi = parseInt(m[2], 10) - 1;
+  if (mi < 0 || mi > 11) return iso;
+  return `${months[mi]} ${parseInt(m[3], 10)}, ${m[1]}`;
 }
 
 function PrivacyNote({ style }) {
@@ -1420,8 +1865,10 @@ function Interview({
   phase, phaseIdx, answers, interimText, confirm, parseError, jackieTurn,
   framesSent, noisy, processingState, spellingMode, stillListening,
   complaintDraft, onComplaintDraftChange,
+  conversationDraft, onConversationDraftChange,
   onStart, onStopMic, onCancel, onAdvance, onConfirmYes, onConfirmRetry,
-  onTextSubmit, onRestart, onSelectGender, onSelectGenderOther, genderOtherMode,
+  onTextSubmit, onRestart, onSelectGender,
+  onNurseOverride,
 }) {
   const recording = micState === "recording";
   const error = micState === "error";
@@ -1433,7 +1880,22 @@ function Interview({
   const label = isConvo && jackieTurn
     ? `Question ${jackieTurn.turn} of ${jackieTurn.max_turns}`
     : defaultLabel;
-  const title = isConvo && jackieTurn?.text ? jackieTurn.text : defaultTitle;
+  // When the editable confirm card is showing, the question title
+  // ("And your date of birth?") is redundant with the card's own
+  // "Here's what I heard" heading and adds noise. Swap to a brief
+  // "Just confirm" header so the patient's eyes go to the input, not
+  // back to the question.
+  const isConfirming = !!confirm;
+  const confirmTitleByPhase = {
+    first_name: "Confirm your first name",
+    last_name: "Confirm your last name",
+    dob: "Confirm your date of birth",
+  };
+  const title = isConvo && jackieTurn?.text
+    ? jackieTurn.text
+    : (isConfirming && confirmTitleByPhase[phase])
+      ? confirmTitleByPhase[phase]
+      : defaultTitle;
   const captured = answers[phase] || "";
   // Show the FULL accumulated answer plus the current interim partial
   // (if there's a new in-flight utterance not yet committed). Previously
@@ -1447,29 +1909,68 @@ function Interview({
   else if (!interimText) liveText = captured;
   else if (captured.toLowerCase().endsWith(interimText.toLowerCase().trim())) liveText = captured;
   else liveText = `${captured} ${interimText}`;
-  const isConfirming = !!confirm;
   const hasCaptured = !!captured.trim();
 
   let subline;
-  if (isConfirming) subline = `Just say "yes" if that's right, or "no" to fix it.`;
+  if (isConfirming) subline = "Tap Send if it's right — or fix it first.";
   else if (gotIt) subline = "Got it — one second.";
-  else if (thinking) subline = `${personaName} is putting a thought together.`;
-  else if (speaking) subline = `${personaName} is talking — I'll listen as soon as ${personaName} finishes.`;
+  // While thinking/speaking the bottom StatusPill is the canonical
+  // indicator — duplicating it in this subline reads as two redundant
+  // "Victor is thinking" messages stacked on screen. Suppress here.
+  else if (thinking) subline = "";
+  else if (speaking) subline = "";
   else if (recording && spellingMode) subline = "Spell your first name out — one letter at a time.";
   else if (recording) subline = "Go ahead — I'm listening.";
   else if (parseError) subline = parseError;
   else if (isConvo && jackieTurn?.closing) subline = "All done — a clinician will be with you soon.";
   else if (isConvo) subline = "Take your time — answer when you're ready.";
   else if (captured && phase === "complaint") subline = `Thanks for sharing. Tap "I'm done" when you've said everything, or keep talking.`;
-  else if (phase === "gender" && genderOtherMode) subline = "Go ahead — tell me however you'd like.";
-  else if (phase === "gender") subline = "Tap whichever fits — your chart, your call.";
+  else if (phase === "gender") subline = "Tap whichever applies — needed for clinical accuracy.";
   else subline = "Just a moment — getting ready to listen.";
+
+  // The nurse override is only useful at the friction-heavy identity
+  // phases. Past that point the patient has already spoken their name +
+  // DOB, so showing a manual-entry escape hatch would just clutter the
+  // screen during clinical questions.
+  const showNurseOverride =
+    !!onNurseOverride &&
+    (phase === "first_name" || phase === "last_name" || phase === "dob");
 
   return (
     <div style={{
       width: "100%", maxWidth: 960,
       display: "flex", flexDirection: "column", alignItems: "center", gap: 24,
+      position: "relative",
     }}>
+      {showNurseOverride && (
+        <button
+          onClick={onNurseOverride}
+          // Top-right corner of the interview canvas, mono-styled and
+          // de-emphasised so it reads as a staff-only affordance — not
+          // something the patient feels they're supposed to tap. The
+          // copy frames it as "for a nurse", which discourages patient
+          // self-selection without locking it behind a PIN.
+          style={{
+            position: "absolute", top: -8, right: 0,
+            background: "transparent",
+            border: "1px solid rgba(47, 217, 244, 0.18)",
+            borderRadius: 999,
+            color: "var(--vic-on-surface-variant)",
+            padding: "6px 14px",
+            fontSize: 11, letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            cursor: "pointer",
+            fontFamily: "'JetBrains Mono', monospace",
+            opacity: 0.6,
+            transition: "opacity .15s, border-color .15s",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.4)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.6"; e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.18)"; }}
+          aria-label="Nurse: enter patient identity manually"
+        >
+          Nurse · enter manually →
+        </button>
+      )}
       <PhaseStepper phaseIdx={phaseIdx} answers={answers} />
 
       <div style={{ textAlign: "center", maxWidth: 640 }}>
@@ -1482,8 +1983,20 @@ function Interview({
         </div>
         <h1 style={{
           fontFamily: "'Space Grotesk', 'Inter', sans-serif",
-          fontSize: 40, fontWeight: 700, letterSpacing: "-0.02em",
+          // Scale font down for long JACKIE turns — a 40px title on
+          // a 200-char question makes the screen feel cramped and the
+          // first words wrap awkwardly. Tiered based on length:
+          //   <= 60 chars  → 40px (normal phase prompts)
+          //   61-120 chars → 30px
+          //   > 120 chars  → 24px (long conversational follow-ups)
+          fontSize: title && title.length > 120
+            ? 24
+            : title && title.length > 60
+            ? 30
+            : 40,
+          fontWeight: 700, letterSpacing: "-0.02em",
           color: "var(--vic-on-surface)", marginBottom: 12,
+          lineHeight: 1.2,
         }}>
           {title}
         </h1>
@@ -1493,15 +2006,19 @@ function Interview({
         }}>
           {subline}
         </p>
-        {thinking && <ThinkingDots personaName={personaName} />}
+        {/* "Persona is thinking…" pill used to live here. Removed —
+            the bottom StatusPill already shows the same state and was
+            duplicating the indicator on the conversation phase. The
+            subline ("Victor is putting a thought together.") still
+            communicates the wait verbally so we don't lose any UX. */}
       </div>
 
-      {!isConfirming && (phase !== "gender" || genderOtherMode) && (
+      {!isConfirming && phase !== "gender" && (
         <MicCircle recording={recording} error={error} onClick={recording ? onStopMic : onStart} />
       )}
 
-      {phase === "gender" && !isConfirming && !genderOtherMode && (
-        <GenderPicker onSelect={onSelectGender} onOther={onSelectGenderOther} />
+      {phase === "gender" && !isConfirming && (
+        <GenderPicker onSelect={onSelectGender} />
       )}
 
       {/* Soft "I'm still here" cue during the open-ended complaint phase.
@@ -1534,7 +2051,7 @@ function Interview({
 
       {isConfirming ? (
         <ConfirmCard confirm={confirm} onYes={onConfirmYes} onRetry={onConfirmRetry} />
-      ) : (phase === "gender" && !genderOtherMode) ? null : phase === "complaint" ? (
+      ) : phase === "gender" ? null : phase === "complaint" ? (
         // Editable textarea — accumulates each finalised utterance and
         // shows the running interim partial below it. Patient can fix
         // mistranscriptions before tapping Send. What you see is what
@@ -1542,6 +2059,20 @@ function Interview({
         <ComplaintEditor
           value={complaintDraft}
           onChange={onComplaintDraftChange}
+          interim={interimText}
+          recording={recording}
+          speaking={speaking}
+        />
+      ) : phase === "conversation" ? (
+        // Same editable-textarea pattern as the complaint phase: the
+        // patient's answer to each J.A.C.K.I.E. follow-up question
+        // lands in a textarea they can edit before tapping Send. Box
+        // resets to empty on every new jackie_turn event so each turn
+        // starts fresh. Send → fires `conversation_answer` (advancePhase
+        // for conversation branch).
+        <ComplaintEditor
+          value={conversationDraft}
+          onChange={onConversationDraftChange}
           interim={interimText}
           recording={recording}
           speaking={speaking}
@@ -1564,6 +2095,7 @@ function Interview({
           ttsState={ttsState}
           personaName={personaName}
           complaintHasText={!!complaintDraft && complaintDraft.trim().length > 0}
+          conversationHasText={!!conversationDraft && conversationDraft.trim().length > 0}
           onCommit={onStopMic}
           onCancel={onCancel}
           onAdvance={onAdvance}
@@ -1696,19 +2228,20 @@ function StillListeningPill() {
 //     (existing advance flow takes over)
 function CommitButton({
   phase, recording, hasCaptured, processingState, ttsState, personaName,
-  complaintHasText,
+  complaintHasText, conversationHasText,
   onCommit, onCancel, onAdvance, onRestart,
 }) {
   const thinking = processingState === "thinking";
   const speaking = ttsState === "speaking";
 
-  // ── COMPLAINT PHASE ────────────────────────────────────────────────
-  // Single source of truth is the editable textarea. Show Send + Restart
-  // whenever the textarea has any text, regardless of whether the mic is
-  // hot or idle. Send commits the textarea contents (which may include
-  // patient edits) and advances directly — no two-step "Send then
-  // Continue" any more.
-  if (phase === "complaint") {
+  // ── COMPLAINT + CONVERSATION PHASES ─────────────────────────────────
+  // Both share the editable-textarea pattern: source of truth is the
+  // textarea, Send commits its contents, the screen shows "Send" only
+  // when the box has text. Conversation phase doesn't have a Restart
+  // affordance — the patient corrects in-place rather than re-recording
+  // a whole answer. Both share the disabled-while-busy display so the
+  // patient sees the persona's status during model latency.
+  if (phase === "complaint" || phase === "conversation") {
     if (thinking || speaking) {
       return (
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
@@ -1718,12 +2251,15 @@ function CommitButton({
         </div>
       );
     }
-    if (complaintHasText) {
+    const hasText = phase === "complaint" ? complaintHasText : conversationHasText;
+    if (hasText) {
       return (
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <button onClick={onRestart} style={secondaryBtnStyle}>
-            ↺ Restart
-          </button>
+          {phase === "complaint" && (
+            <button onClick={onRestart} style={secondaryBtnStyle}>
+              ↺ Restart
+            </button>
+          )}
           <button onClick={onAdvance} style={primaryBtnStyle(true)}>
             Send →
           </button>
@@ -1734,7 +2270,7 @@ function CommitButton({
     return null;
   }
 
-  // ── ALL OTHER PHASES (name, dob, conversation) ──────────────────────
+  // ── IDENTITY PHASES (first_name, last_name, dob) ────────────────────
   if (thinking || speaking) {
     return (
       <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
@@ -1800,7 +2336,7 @@ function PhaseStepper({ phaseIdx, answers }) {
     { key: "first_name", label: "First name" },
     { key: "last_name", label: "Last name" },
     { key: "dob", label: "Date of birth" },
-    { key: "gender", label: "Gender" },
+    { key: "gender", label: "Sex at birth" },
     { key: "complaint", label: "Reason for visit" },
     { key: "conversation", label: "Follow-up" },
   ];
@@ -1874,25 +2410,30 @@ function MicCircle({ recording, error, onClick }) {
   );
 }
 
-// Button picker for the gender phase. Replaces the mic circle on the
-// gender step (no voice input here — it's intentionally tap-only since
-// "Are you male, female, or non-binary?" via voice has too many failure
-// modes and is more invasive than a button tap). Order: Female first
-// because the demo's pitch is centered on under-triage of women in CVD.
+// Button picker for the sex-at-birth phase. Tap-only: voice ("are
+// you male or female?") has too many failure modes and is more
+// invasive than a button tap. Order: Female first because the demo's
+// pitch is centered on under-triage of women in CVD.
 //
-// Big lucide icons (Venus / Mars / Transgender / Minus) make this read
-// at a glance for distressed or visually-impaired patients — the icon
-// is the affordance, the label confirms the meaning.
-function GenderPicker({ onSelect, onOther }) {
+// Field semantics: this captures *sex assigned at birth* (FHIR
+// AdministrativeGender / Joint Commission birth-sex), which is what
+// the ED triage agents need for differential priors, drug dosing,
+// lab reference ranges, and imaging protocol decisions. Gender
+// identity is a separate field and out of scope for the demo.
+//
+// Strictly binary: every patient has a sex assigned at birth, so
+// "prefer not to say" doesn't fit a question with a guaranteed answer
+// — and the LLM agents need a value to risk-stratify. Intersex
+// (~1.7% of births) almost never changes immediate ED management and
+// is captured separately in real EHRs after triage. Big Venus / Mars
+// icons make this read at a glance for distressed or visually-
+// impaired patients.
+function GenderPicker({ onSelect }) {
   const opts = [
-    { value: "Female",            Icon: Venus },
-    { value: "Male",              Icon: Mars },
-    { value: "Non-binary",        Icon: Transgender },
-    { value: "Prefer not to say", Icon: Minus },
+    { value: "Female", Icon: Venus },
+    { value: "Male",   Icon: Mars  },
   ];
-  // Shared card style — used by both the 4 icon options and the "Other" mic
-  // button so they read as one set with an obvious affordance hierarchy
-  // (icons first, voice fallback below).
+  // Shared card style for the two icon options.
   const cardStyle = {
     display: "flex", flexDirection: "column",
     alignItems: "center", justifyContent: "center", gap: 14,
@@ -1921,7 +2462,7 @@ function GenderPicker({ onSelect, onOther }) {
       maxWidth: 480, width: "100%",
       padding: "0 24px",
     }}>
-      {/* 2×2 grid of the four standard options */}
+      {/* 1×2 row of the two options (Female first per CVD-bias pitch). */}
       <div style={{
         display: "grid",
         gridTemplateColumns: "repeat(2, 1fr)",
@@ -1942,32 +2483,6 @@ function GenderPicker({ onSelect, onOther }) {
           </button>
         ))}
       </div>
-      {/* "Other" — voice fallback for anyone whose identity isn't in the
-          four shorthand options. Tap → mic activates and the patient
-          speaks freely; the transcript becomes the gender field on the
-          chart. Uses the Mic lucide icon so the affordance ("speak") is
-          unambiguous from the icon alone. */}
-      <button
-        onClick={onOther}
-        style={{ ...cardStyle, minHeight: 96, padding: "20px" }}
-        onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.97)")}
-        onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
-        onMouseLeave={cardHoverOut}
-        onMouseEnter={cardHoverIn}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <Mic size={36} strokeWidth={1.5} color="var(--vic-primary)" />
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-            <span style={{ fontSize: 16, fontWeight: 700 }}>Other</span>
-            <span style={{
-              fontSize: 12, fontWeight: 400, opacity: 0.7,
-              color: "var(--vic-on-surface-variant)",
-            }}>
-              Tap and tell me in your own words
-            </span>
-          </div>
-        </div>
-      </button>
     </div>
   );
 }
@@ -2129,10 +2644,29 @@ function StatusPill({ recording, error, ttsState, wsStatus, noisy, processingSta
 // textarea as a soft preview — landed text appears in the textarea
 // proper once Deepgram finalises that segment.
 function ComplaintEditor({ value, onChange, interim, recording, speaking }) {
-  const interimVisible =
-    !!interim &&
-    interim.trim().length > 0 &&
-    !value.toLowerCase().endsWith(interim.toLowerCase().trim());
+  // Merge live interim into what the patient sees in the textarea so they
+  // can confirm "yes, the system heard me" without scanning a separate
+  // status line. The committed `value` (final transcripts) is the source of
+  // truth; interim is appended as a soft visual addendum until the next
+  // EndOfTurn promotes it. If the patient edits the textarea, their typed
+  // text becomes the new `value` and interim is dropped from the display
+  // until a fresh utterance arrives.
+  const interimTrim = (interim || "").trim();
+  const interimAlreadyInValue =
+    interimTrim &&
+    value.toLowerCase().trim().endsWith(interimTrim.toLowerCase());
+  const displayValue =
+    interimTrim && !interimAlreadyInValue
+      ? value
+        ? `${value} ${interimTrim}`
+        : interimTrim
+      : value;
+  const handleChange = (e) => {
+    // Strip trailing interim before passing the edit upstream so the next
+    // partial doesn't compound on top of itself. If the user kept the
+    // interim suffix verbatim, treat it as accepted and bake it into value.
+    onChange(e.target.value);
+  };
   return (
     <div className="vic-glass" style={{
       width: "100%", padding: 24, borderRadius: 24,
@@ -2157,8 +2691,8 @@ function ComplaintEditor({ value, onChange, interim, recording, speaking }) {
         </span>
       </div>
       <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={displayValue}
+        onChange={handleChange}
         placeholder="When you start speaking, what you say will appear here. You can edit any of it before you send."
         spellCheck
         style={{
@@ -2177,21 +2711,11 @@ function ComplaintEditor({ value, onChange, interim, recording, speaking }) {
           boxSizing: "border-box",
         }}
       />
-      {interimVisible && (
-        <div style={{
-          fontSize: 14, color: "var(--vic-on-surface-variant)",
-          fontStyle: "italic", padding: "0 4px",
-          opacity: 0.85,
-        }}>
-          <span style={{
-            fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
-            color: "rgba(47, 217, 244, 0.55)", letterSpacing: "0.18em",
-            marginRight: 8, textTransform: "uppercase",
-          }}>hearing</span>
-          {interim}
-          <span className="vic-typing-cursor" />
-        </div>
-      )}
+      {/* The "HEARING <interim>" preview block lived here in the previous
+          design. It's now redundant — interim is merged directly into
+          the textarea displayValue (see top of this component) so the
+          patient sees their words land in the box itself, not in a
+          parallel status line. */}
     </div>
   );
 }
@@ -2312,62 +2836,210 @@ function SpelledLetters({ value, placeholder }) {
   );
 }
 
+// Editable confirm card — modelled on Claude voice / Gemini / ChatGPT
+// voice patterns. After the mic stops, the captured text is rendered in
+// an editable input the patient can correct inline, with a single
+// primary Send → button that commits whatever's currently in the box.
+// The displayed text IS the confirmation: no "yes / no" voice round-
+// trip, no spelling-mode loop unless the patient explicitly asks for
+// it. Voice "yes" / "no" handlers in the parent still work for
+// touch-free accessibility — voice "yes" submits the unedited value,
+// voice "no" calls onRetry.
 function ConfirmCard({ confirm, onYes, onRetry }) {
-  const heading =
-    confirm.phase === "first_name"
-      ? "Just want to make sure I got your first name right."
-      : confirm.phase === "last_name"
-      ? confirm.value
-        ? "And your last name — did I get this right?"
-        : "Skipping your last name — the clinician can add it later."
-      : "And your date of birth — did I get this right?";
+  const isFirstName = confirm.phase === "first_name";
+  const isLastName = confirm.phase === "last_name";
+  const isDOB = confirm.phase === "dob";
+  const fieldLabel = isFirstName
+    ? "First name"
+    : isLastName
+    ? "Last name"
+    : "Date of birth";
+  const heading = isFirstName
+    ? "Here's what I heard. Edit if needed."
+    : isLastName
+    ? confirm.value
+      ? "Here's what I heard. Edit if needed."
+      : "I couldn't catch your last name — type it or skip."
+    : isDOB
+    ? confirm.value
+      ? confirm.partial
+        ? "I caught part of it — pick or type the right date."
+        : "Here's what I heard. Edit if needed."
+      : "I didn't catch a full date — pick or type it."
+    : "Here's what I heard. Edit if needed.";
+  const heardHint = isDOB && confirm.heard ? confirm.heard : null;
+  // Local state for the editable value. Reset whenever a new confirm
+  // event arrives (different phase, or new attempt at the same phase).
+  // For DOB we coerce non-ISO strings to "" so the native <input
+  // type="date"> never gets a value it can't parse — otherwise the
+  // browser logs a warning and ignores the value, which (a) is noisy
+  // and (b) silently drops the patient's data on the floor.
+  const initialEdited = (() => {
+    const v = confirm?.value || "";
+    if (confirm?.phase === "dob" && v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      return "";
+    }
+    return v;
+  })();
+  const [edited, setEdited] = useState(initialEdited);
+  const inputRef = useRef(null);
+  useEffect(() => {
+    const v = confirm?.value || "";
+    if (confirm?.phase === "dob" && v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      setEdited("");
+    } else {
+      setEdited(v);
+    }
+    // Move caret to end so the patient can keep typing without
+    // selecting first. Tiny delay lets the input mount.
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        const len = el.value.length;
+        try { el.setSelectionRange(len, len); } catch { /* date inputs */ }
+      }
+    });
+  }, [confirm?.value, confirm?.phase]);
+  const trimmed = edited.trim();
+  const canSend = !!trimmed || isLastName; // last_name allows empty (skip)
+  const submit = () => {
+    if (!canSend) return;
+    onYes(trimmed);
+  };
+  const handleKey = (e) => {
+    // Enter submits, Escape clears for re-record. Standard keyboard
+    // ergonomics for power users / clinicians at the kiosk.
+    if (e.key === "Enter") { e.preventDefault(); submit(); }
+    else if (e.key === "Escape") { e.preventDefault(); onRetry(); }
+  };
   return (
     <div className="vic-glass" style={{
       width: "100%", padding: 32, borderRadius: 32,
       border: "1px solid rgba(47, 217, 244, 0.3)",
       boxShadow: "0 32px 64px -12px rgba(0, 0, 0, 0.5)",
-      display: "flex", flexDirection: "column", gap: 20, alignItems: "center",
-      textAlign: "center",
+      display: "flex", flexDirection: "column", gap: 16, alignItems: "stretch",
     }}>
       <div style={{
-        fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-        letterSpacing: "0.2em", color: "var(--vic-primary)",
+        display: "flex", justifyContent: "space-between", alignItems: "baseline",
       }}>
-        Please confirm
-      </div>
-      <div style={{ fontSize: 18, color: "var(--vic-on-surface-variant)" }}>
-        {heading}
+        <span style={{
+          fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.2em", color: "rgba(47, 217, 244, 0.8)",
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          {fieldLabel} · editable
+        </span>
+        <span style={{
+          fontSize: 10, color: "var(--vic-on-surface-variant)",
+          fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em",
+        }}>
+          tap to fix · enter to send
+        </span>
       </div>
       <div style={{
-        fontFamily: "'Space Grotesk', 'Inter', sans-serif",
-        fontSize: 38, fontWeight: 700, color: "var(--vic-on-surface)",
-        letterSpacing: "-0.01em",
+        fontSize: 14, color: "var(--vic-on-surface-variant)", textAlign: "center",
       }}>
-        {confirm.value}
+        {heading}
       </div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
-        <button
-          onClick={onYes}
+      {isDOB ? (
+        // Native date input gives the patient a proper picker for
+        // edits. confirm.value is already normalised to YYYY-MM-DD by
+        // parseDOB so it loads cleanly into <input type="date">.
+        <>
+          <input
+            ref={inputRef}
+            type="date"
+            value={edited}
+            onChange={(e) => setEdited(e.target.value)}
+            onKeyDown={handleKey}
+            style={{
+              width: "100%", padding: "18px 20px",
+              background: "rgba(12, 19, 36, 0.55)",
+              border: "1px solid rgba(47, 217, 244, 0.25)",
+              borderRadius: 16,
+              color: "var(--vic-on-surface)",
+              fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+              fontSize: 28, fontWeight: 600, letterSpacing: "-0.01em",
+              textAlign: "center", outline: "none", boxSizing: "border-box",
+            }}
+          />
+          {heardHint && (
+            // Patient said something we couldn't fully parse (e.g.
+            // "April 1990" — month + year but no day). Showing the
+            // raw transcript here proves the kiosk was listening; the
+            // date input above is where they finalise it.
+            <div style={{
+              fontSize: 13, color: "var(--vic-on-surface-variant)",
+              fontStyle: "italic", textAlign: "center",
+              padding: "0 4px", opacity: 0.75,
+            }}>
+              <span style={{
+                fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+                color: "rgba(47, 217, 244, 0.55)", letterSpacing: "0.18em",
+                marginRight: 8, textTransform: "uppercase",
+              }}>i heard</span>
+              "{heardHint}"
+            </div>
+          )}
+        </>
+      ) : (
+        <input
+          ref={inputRef}
+          type="text"
+          value={edited}
+          onChange={(e) => setEdited(e.target.value)}
+          onKeyDown={handleKey}
+          autoCapitalize="words"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={isLastName ? "Type your last name (or leave blank to skip)" : "Type to fix"}
           style={{
-            padding: "14px 32px", borderRadius: 999,
-            background: "linear-gradient(to right, var(--vic-primary), #008ea1)",
-            color: "var(--vic-on-primary)", fontWeight: 700, fontSize: 15,
-            border: "none", cursor: "pointer",
-            boxShadow: "0 8px 30px rgba(47, 217, 244, 0.3)",
+            width: "100%", padding: "18px 20px",
+            background: "rgba(12, 19, 36, 0.55)",
+            border: "1px solid rgba(47, 217, 244, 0.25)",
+            borderRadius: 16,
+            color: "var(--vic-on-surface)",
+            fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+            fontSize: 32, fontWeight: 700, letterSpacing: "-0.01em",
+            textAlign: "center", outline: "none", boxSizing: "border-box",
           }}
-        >
-          ✓ Yes, that's correct
-        </button>
+        />
+      )}
+      <div style={{
+        display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center",
+        marginTop: 4,
+      }}>
         <button
           onClick={onRetry}
+          aria-label="Re-record"
           style={{
-            padding: "14px 32px", borderRadius: 999,
+            padding: "14px 24px", borderRadius: 999,
             background: "transparent",
-            color: "var(--vic-on-surface)", fontWeight: 600, fontSize: 15,
-            border: "1px solid rgba(255, 255, 255, 0.2)", cursor: "pointer",
+            color: "var(--vic-on-surface-variant)", fontWeight: 600, fontSize: 14,
+            border: "1px solid rgba(47, 217, 244, 0.25)", cursor: "pointer",
+            letterSpacing: "0.04em",
           }}
         >
-          ↺ No, let me try again
+          🎤 Try again
+        </button>
+        <button
+          onClick={submit}
+          disabled={!canSend}
+          style={{
+            padding: "14px 36px", borderRadius: 999,
+            background: canSend
+              ? "linear-gradient(to right, var(--vic-primary), #008ea1)"
+              : "rgba(47, 217, 244, 0.12)",
+            color: canSend ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
+            fontWeight: 700, fontSize: 15,
+            border: "none",
+            cursor: canSend ? "pointer" : "not-allowed",
+            boxShadow: canSend ? "0 8px 30px rgba(47, 217, 244, 0.3)" : "none",
+            letterSpacing: "0.02em",
+          }}
+        >
+          {isLastName && !trimmed ? "Skip →" : "Send →"}
         </button>
       </div>
     </div>
