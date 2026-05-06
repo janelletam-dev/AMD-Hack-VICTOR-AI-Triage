@@ -284,6 +284,36 @@ For V2, the affect-acoustic model could be fine-tuned directly on:
 See [Bridge2AI feasibility study, Frontiers 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12037532/)
 for the broader vision V.I.C.T.O.R. positions as a downstream application of.
 
+### V2 prospective-validation path — ER-REASON (UCSF)
+
+The strongest pending validation move for V.I.C.T.O.R. is cross-institutional
+testing on
+[**ER-REASON**](https://physionet.org/content/er-reason/1.0.0/) — a 2024
+PhysioNet release of UCSF ED data: 3,437 patients, 3,984 encounters,
+25,174 clinical notes (March 2022 – March 2024) with ESI acuity at
+triage, 395 unique chief complaints, ED diagnoses, disposition
+decisions, and **72 expert-authored physician rationales** documenting
+step-by-step reasoning (rule-out logic, decision factors, treatment
+plans). Demographics include preferred language — a dimension MIMIC
+under-captures.
+
+ER-REASON closes the single-institution-bias caveat that the
+MIMIC-IV-ED-only validation currently carries. Concrete V2 work it
+unlocks:
+
+| Use case | Method | Question answered |
+|---|---|---|
+| Cross-institution bias dictionary | Re-run the chief-complaint-by-acuity analysis on ER-REASON; compare to MIMIC-IV-ED | Does abd-pain-F=2.80 vs CP-M=2.17 generalize past BIDMC? |
+| Concordance flag prospective validation | Run engine on ER-REASON triage notes; check fire rate against disposition outcomes | Does flag firing correlate with downstream under-triage signal? |
+| Reasoning-chain alignment | Fine-tune SCRIBE / MERCED on the 72 expert rationales | Do clinical-reasoning agents reason like attendings? |
+| JACKIE adversarial eval substrate | Construct adversarial test set from rationale corpus + edge-case prompts | Does JACKIE follow her safety rules in practice? |
+
+Access is gated: PhysioNet credentialed status + CITI training + signed
+DUA + author approval. License is "PhysioNet Contributor Review Health
+Data License 1.5.0." Time cost is days to weeks for credentialing —
+which is exactly why this is named here as the V2 path, not promised
+as a hackathon deliverable.
+
 ---
 
 ## Clinical safety architecture
@@ -418,11 +448,17 @@ rate per cohort independently — useful for catching regressions when the
 phrase dictionary expands.
 
 **Limits.** The cases are synthetic, hand-written to match realistic ED
-triage transcripts. Real prospective validation against MIMIC-IV-ED
-triage notes with confirmed clinical outcomes (and sensitivity /
-specificity per demographic subgroup) is V2 — see Production Roadmap
-below. The eval is a safety net for the *architecture* (does the
-conjunction hold?), not a substitute for clinical validation.
+triage transcripts. Real prospective validation requires labelled ED
+encounter data with triage ESI + chief complaint + disposition
+outcomes — V2. The named validation path is **cross-institutional**:
+MIMIC-IV-ED (BIDMC, the source of the bias dictionary) plus
+[ER-REASON (UCSF, 3,984 encounters, 2022–2024)](https://physionet.org/content/er-reason/1.0.0/),
+with the latter's 72 expert-authored physician reasoning chains as the
+alignment substrate for SCRIBE / MERCED clinical-reasoning fidelity.
+Cross-institution testing closes the single-institution-bias caveat
+the MIMIC-only analysis currently carries. The eval here is a safety
+net for the *architecture* (does the conjunction hold?), not a
+substitute for clinical validation.
 
 ---
 
@@ -444,7 +480,7 @@ they're auditable rather than hidden:
 | **Demo-mode safety** | `DEMO_MODE=true` env toggle | Startup assertion refuses to boot with `DEMO_MODE=true` and `NODE_ENV=production` together (shipped — see `main.py`) |
 | **Secrets management** | `.env` file, gitignored | Doppler / AWS Secrets Manager / DO Vault; rotation every 90 days |
 | **HIPAA BAA** | Out of scope for hackathon | Required before any real PHI: BAAs with Anthropic, Deepgram, ElevenLabs, thymia, hosting; PHI-grade encryption at rest + in transit |
-| **Clinical validation** | MIMIC-IV-derived rules + LoRA fine-tune | Prospective study at a partner ED; clinician co-author; IRB; FDA CDS Software guidance review (clinician retains independent review of basis) |
+| **Clinical validation** | MIMIC-IV-derived rules + LoRA fine-tune | Cross-institutional retrospective: MIMIC-IV-ED (BIDMC) + [ER-REASON (UCSF)](https://physionet.org/content/er-reason/1.0.0/) — the latter's 72 expert physician rationales as reasoning-alignment substrate. Then prospective study at a partner ED; IRB; FDA CDS Software guidance review (clinician retains independent review of basis) |
 | **Observability** | Stdout logs + `/health/full` | OpenTelemetry traces, Prometheus metrics, Sentry for errors, paged alerts on agent-fallback rate spikes |
 | **Disaster recovery** | None | Daily Redis snapshot, S3 cross-region replication, documented RTO/RPO |
 
