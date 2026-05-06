@@ -2,7 +2,7 @@
 
 **Voice-first AI triage agent that catches cardiovascular disease presentations standard triage misses.**
 
-Built for the AMD Developer Hackathon (May 4–10, 2026).
+Built by [Janelle Tamayo](https://huggingface.co/jantam13), RN — for the AMD Developer Hackathon (May 4–10, 2026).
 
 ---
 
