@@ -20,7 +20,14 @@ from agents import swarm
 from config import settings
 from engine.concordance import engine as concordance_engine
 from engine.concordance import detect_emergency, detect_safety_escalation
-from services.clinical_knowledge import compute_clinical_heart, is_chest_pain
+from services.clinical_knowledge import (
+    compute_clinical_alvarado,
+    compute_clinical_heart,
+    compute_clinical_wells,
+    is_abdominal_pain,
+    is_chest_pain,
+    is_dyspnea_or_pe_concern,
+)
 from services.coverage_tracker import extract_covered, extract_negatives, priority_order
 from services.deepgram_service import DeepgramService, Transcript
 from services.event_bus import bus
@@ -44,6 +51,67 @@ MAX_COMPLAINT_FRAMES = 3000
 HELIOS_REFRESH_EVERY_N_TURNS = 2
 
 log = logging.getLogger("victor.audio_ws")
+
+
+async def _publish_risk_scores(
+    bus_,
+    room: str,
+    state: dict,
+    transcript: str,
+    age: int | None,
+) -> None:
+    """Run every applicable risk score against the patient's
+    accumulated transcript and publish a `risk_score` event for each
+    one whose chief-complaint gate fires. Currently:
+      - HEART (cardiac CCs)         — clinical_knowledge.is_chest_pain
+      - Wells/PE (SOB or pleuritic) — is_dyspnea_or_pe_concern
+      - Alvarado (abdominal CCs)    — is_abdominal_pain
+    Each score is recomputed on every JACKIE turn as more PMH and
+    classical features surface — the dashboard's RiskScoreBadge
+    re-renders with the latest values per `score` key.
+    """
+    cc = state.get("complaint_text") or transcript
+    # HEART
+    if is_chest_pain(cc):
+        heart = compute_clinical_heart(transcript, age)
+        state["heart_score"] = heart
+        await bus_.publish(room, {
+            "type": "risk_score",
+            "data": {"score": "HEART", **heart},
+        })
+    # Wells / PE
+    if is_dyspnea_or_pe_concern(cc):
+        wells = compute_clinical_wells(transcript)
+        state["wells_score"] = wells
+        await bus_.publish(room, {
+            "type": "risk_score",
+            "data": wells,
+        })
+    # Alvarado / appendicitis (broadly: abdominal pain)
+    if is_abdominal_pain(cc):
+        alvarado = compute_clinical_alvarado(transcript)
+        state["alvarado_score"] = alvarado
+        await bus_.publish(room, {
+            "type": "risk_score",
+            "data": alvarado,
+        })
+
+
+def _full_patient_text(state: dict) -> str:
+    """Concatenate everything the patient has said so far — the chief
+    complaint plus every patient turn from JACKIE history. Used as
+    input to demo-mode Helios so the scripted biomarkers respond to
+    keywords ("exhausted" → exhaustion bumps). For real Thymia API
+    this argument is harmlessly ignored (audio is the input there)."""
+    parts: list[str] = []
+    if state.get("complaint_text"):
+        parts.append(state["complaint_text"])
+    for h in state.get("jackie_history") or []:
+        if h.get("role") == "patient" and h.get("text"):
+            parts.append(h["text"])
+    if state.get("latest_final_transcript"):
+        parts.append(state["latest_final_transcript"])
+    return " ".join(parts)
 
 
 def _age_from_dob_iso(dob_iso: str | None) -> int | None:
@@ -136,6 +204,8 @@ async def audio_ws(
         "gender": None,                     # captured from identity_update; used to bias coverage priority (LMP for female + abdominal pain, etc.)
         "pertinent_negatives": [],          # explicit denials from the patient ("no SOB", "denies radiation"); woven into the SCRIBE HPI paragraph for chart completeness — pertinent negatives rule out can't-miss diagnoses
         "heart_score": None,                # clinical (pre-EKG, pre-troponin) HEART score for chest-pain cases; recomputed each turn as PMH and classical features surface
+        "wells_score": None,                # clinical (pre-vital, pre-imaging) Wells PE score for SOB / pleuritic chest cases
+        "alvarado_score": None,             # clinical (pre-exam, pre-lab) Alvarado score for abdominal-pain cases — limited at triage but useful as anchor
         "helios_submitted": False,          # one Helios run per session
         "helios_lang": "en-US",             # default; updated from Deepgram language
         # J.A.C.K.I.E. follow-up loop state
@@ -445,28 +515,21 @@ async def audio_ws(
                 coverage_input.append({"role": "patient", "text": patient_utterance})
             covered = extract_covered(coverage_input)
             negatives = extract_negatives(coverage_input)
-            # Recompute the clinical HEART score against the full
+            # Recompute clinical risk scores against the full
             # accumulated transcript (chief complaint + every patient
-            # turn so far). Risk factors and history score will tend
-            # to grow as the patient surfaces more PMH ("oh, I have
-            # diabetes too") and as classical features emerge in
-            # follow-ups. Only published if the chief complaint is
-            # cardiac in the first place.
-            if is_chest_pain(state.get("complaint_text")):
-                full_text_for_heart = " ".join(
-                    h.get("text", "")
-                    for h in coverage_input
-                    if h.get("role") == "patient"
-                )
-                heart = compute_clinical_heart(
-                    full_text_for_heart,
-                    _age_from_dob_iso(state.get("dob_iso")),
-                )
-                state["heart_score"] = heart
-                await bus.publish(room, {
-                    "type": "risk_score",
-                    "data": {"score": "HEART", **heart},
-                })
+            # turn so far). Scores tend to grow as PMH surfaces and
+            # classical features emerge in follow-ups. Each score
+            # gates on its own chief-complaint trigger so we don't
+            # publish a low Wells for a chest-pain case (or vice versa).
+            full_text = " ".join(
+                h.get("text", "")
+                for h in coverage_input
+                if h.get("role") == "patient"
+            )
+            await _publish_risk_scores(
+                bus, room, state, full_text,
+                age=_age_from_dob_iso(state.get("dob_iso")),
+            )
             remaining = priority_order(
                 state.get("complaint_text"),
                 state.get("gender"),
@@ -592,6 +655,7 @@ async def audio_ws(
             user_label=session_id,
             date_of_birth=state["dob_iso"],
             language=state["helios_lang"],
+            transcript=_full_patient_text(state),
         )
         if not result:
             # Thymia API timeout or error — continue triage without biomarkers.
@@ -862,16 +926,13 @@ async def audio_ws(
                         # being ordered — anchors expectations early.
                         # Score updates as the conversation accumulates
                         # (we recompute on every J.A.C.K.I.E. turn below).
-                        if is_chest_pain(complaint):
-                            heart = compute_clinical_heart(
-                                complaint,
-                                _age_from_dob_iso(state.get("dob_iso")),
-                            )
-                            state["heart_score"] = heart
-                            asyncio.create_task(bus.publish(room, {
-                                "type": "risk_score",
-                                "data": {"score": "HEART", **heart},
-                            }))
+                        # Same helper publishes Wells/PE for SOB cases
+                        # and Alvarado for abdominal pain cases — only
+                        # the score(s) whose CC trigger fires are sent.
+                        asyncio.create_task(_publish_risk_scores(
+                            bus, room, state, complaint,
+                            age=_age_from_dob_iso(state.get("dob_iso")),
+                        ))
                         # Fire SCRIBE's chief-complaint distillation in the
                         # background. Result lands as a follow-up
                         # identity_update with a `chief_complaint_short`

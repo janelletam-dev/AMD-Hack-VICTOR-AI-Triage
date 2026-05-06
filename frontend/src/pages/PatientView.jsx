@@ -329,8 +329,12 @@ function formatYMD(y, m, d) {
 
 // Patterns for patient refusing DOB or giving age instead.
 const DOB_REFUSAL = /\b(i\s+don'?t\s+(want|wish)\s+to|i'?d?\s+rather\s+not|no\s+thank|skip|pass|prefer\s+not|not\s+giving|refuse)\b/i;
-const AGE_PATTERN = /\b(?:i'?m|i\s+am|age)?\s*(\d{1,3})\s*(?:years?\s*old|yrs?\s*old|y\.?o\.?)?\b/i;
-const AGE_SPOKEN = /\b(?:i'?m|i\s+am)\s+(\d{1,3})\b/i;
+// AGE detection requires a prefix ("I'm", "I am", "age") OR a suffix
+// ("years old", "yo") around the number — otherwise a date like
+// "13 April 1990" false-matches "13" as age 13 and short-circuits the
+// real DOB parser. Three-clause pattern: (prefix path | suffix path |
+// "age <n>" literal). Capture group 1, 2, or 3 carries the digits.
+const AGE_PATTERN = /\b(?:i'?m|i\s+am)\s+(\d{1,3})(?!\s*\d)\b|\b(\d{1,3})\s*(?:years?\s+old|yrs?\s+old|y\.?o\.?)\b|\bage\s+(\d{1,3})\b/i;
 
 function parseDOB(raw) {
   if (!raw) return { ok: false, message: "I didn't catch a date." };
@@ -340,15 +344,26 @@ function parseDOB(raw) {
     return { ok: true, value: "Not provided", skipped: true };
   }
 
-  // Patient gives age instead of DOB ("I'm 54") → calculate approximate year.
-  const ageMatch = raw.match(AGE_PATTERN) || raw.match(AGE_SPOKEN);
-  if (ageMatch) {
-    const age = parseInt(ageMatch[1], 10);
+  // Patient gives age instead of DOB ("I'm 54", "30 years old", "age 30")
+  // → calculate approximate year. We test BOTH the raw text and the
+  // wordsToNumbers-normalised version so spoken numbers ("I'm thirty")
+  // also catch.
+  const tryAge = (s) => {
+    const m = s.match(AGE_PATTERN);
+    if (!m) return null;
+    const digits = m[1] || m[2] || m[3];
+    if (!digits) return null;
+    const age = parseInt(digits, 10);
     if (age > 0 && age <= 120) {
       const approxYear = new Date().getFullYear() - age;
       return { ok: true, value: `~${approxYear} (age ${age})`, fromAge: true, age };
     }
-  }
+    return null;
+  };
+  const ageRaw = tryAge(raw);
+  if (ageRaw) return ageRaw;
+  const ageNorm = tryAge(wordsToNumbers(raw));
+  if (ageNorm) return ageNorm;
 
   // First convert spoken digits ("nineteen ninety" → "1990") so the rest
   // of the parser only sees numbers.
@@ -513,6 +528,15 @@ export default function PatientView() {
   // tapping Send. Resets to "" each time J.A.C.K.I.E. asks a new
   // question so the box is always fresh for the patient's reply.
   const [conversationDraft, setConversationDraft] = useState("");
+  // Running log of JACKIE↔patient turns during the conversation phase.
+  // Renders as a small scrollable history above the editable textarea
+  // so a stressed/distracted patient can see what was just asked and
+  // what they already said — particularly useful when JACKIE asks a
+  // multi-part question and the patient forgets the second half. Each
+  // entry: {role: "jackie"|"patient", text, turn}. Capped to keep
+  // memory bounded; the full history still flows to the backend for
+  // SCRIBE / V.I.C.T.O.R. via state["jackie_history"].
+  const [conversationLog, setConversationLog] = useState([]);
   // Track how many times the patient has retried the last_name phase.
   // After 2 failures we skip and let the clinician fill it in via the
   // editable identity card. Avoids derailing the demo on a hard surname.
@@ -594,6 +618,14 @@ export default function PatientView() {
         turn: data.turn,
         max_turns: data.max_turns,
         closing: !!data.closing,
+      });
+      // Append the just-arrived JACKIE question to the on-screen
+      // conversation log so the patient (and an observing clinician)
+      // can scroll back through the dialogue. Clip to last 20 entries
+      // to keep DOM size bounded — full history lives backend-side.
+      setConversationLog((prev) => {
+        const next = [...prev, { role: "jackie", text: data.text, turn: data.turn }];
+        return next.length > 20 ? next.slice(-20) : next;
       });
       // TTS is starting — clear "thinking" state.
       setProcessingState("speaking");
@@ -985,6 +1017,7 @@ export default function PatientView() {
     setInterimText("");
     setComplaintDraft("");  // fresh editable textarea for new interview
     setConversationDraft("");
+    setConversationLog([]);
     setConfirm(null);
     setParseError("");
     // Reset the cross-view store at the start of a new interview.
@@ -1317,6 +1350,13 @@ export default function PatientView() {
           type: "conversation_answer",
           data: { text, language: "en" },
         });
+        // Push the just-sent answer into the on-screen log so the
+        // patient sees their reply land alongside JACKIE's question.
+        // Same 20-entry cap as the JACKIE-side push above.
+        setConversationLog((prev) => {
+          const next = [...prev, { role: "patient", text }];
+          return next.length > 20 ? next.slice(-20) : next;
+        });
         setProcessingState("thinking"); // optimistic — agent_activity confirms
       }
       setInterimText("");
@@ -1447,6 +1487,7 @@ export default function PatientView() {
             onComplaintDraftChange={setComplaintDraft}
             conversationDraft={conversationDraft}
             onConversationDraftChange={setConversationDraft}
+            conversationLog={conversationLog}
             onStart={start}
             onStopMic={handleStopMic}
             onCancel={stop}
@@ -1866,6 +1907,7 @@ function Interview({
   framesSent, noisy, processingState, spellingMode, stillListening,
   complaintDraft, onComplaintDraftChange,
   conversationDraft, onConversationDraftChange,
+  conversationLog,
   onStart, onStopMic, onCancel, onAdvance, onConfirmYes, onConfirmRetry,
   onTextSubmit, onRestart, onSelectGender,
   onNurseOverride,
@@ -2064,19 +2106,21 @@ function Interview({
           speaking={speaking}
         />
       ) : phase === "conversation" ? (
-        // Same editable-textarea pattern as the complaint phase: the
-        // patient's answer to each J.A.C.K.I.E. follow-up question
-        // lands in a textarea they can edit before tapping Send. Box
-        // resets to empty on every new jackie_turn event so each turn
-        // starts fresh. Send → fires `conversation_answer` (advancePhase
-        // for conversation branch).
-        <ComplaintEditor
-          value={conversationDraft}
-          onChange={onConversationDraftChange}
-          interim={interimText}
-          recording={recording}
-          speaking={speaking}
-        />
+        // Same editable-textarea pattern as the complaint phase, but
+        // with a scrollable on-screen conversation log above the box
+        // so the patient sees the running dialogue (their answers +
+        // JACKIE's questions). Box resets on every new jackie_turn
+        // so the input is always fresh; the log persists.
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, width: "100%" }}>
+          <ConversationHistory log={conversationLog} personaName={personaName} currentTurn={jackieTurn} />
+          <ComplaintEditor
+            value={conversationDraft}
+            onChange={onConversationDraftChange}
+            interim={interimText}
+            recording={recording}
+            speaking={speaking}
+          />
+        </div>
       ) : (
         <TranscriptCard
           transcript={liveText}
@@ -2643,6 +2687,99 @@ function StatusPill({ recording, error, ttsState, wsStatus, noisy, processingSta
 // While the mic is hot, the latest interim partial appears below the
 // textarea as a soft preview — landed text appears in the textarea
 // proper once Deepgram finalises that segment.
+// Scrollable on-screen log of the JACKIE↔patient dialogue during the
+// conversation phase. Helps stressed/distracted patients see what was
+// just asked (and what they already answered) without trying to recall
+// from voice. Each entry is a chat-style bubble: persona Qs left-aligned
+// in cyan, patient As right-aligned in neutral. Auto-scrolls to bottom
+// on new entries; capped at the last ~6 entries on screen by max-height
+// (older entries scroll up but stay accessible). Hides when empty so
+// the patient doesn't see a confusing blank box on the very first turn
+// (the title carries the active question).
+function ConversationHistory({ log, personaName, currentTurn }) {
+  const scrollRef = useRef(null);
+  // Drop the most recent JACKIE question from the log if it's the
+  // CURRENT turn — the title already shows it word-for-word, no need
+  // to duplicate. We still keep the patient's prior answer to it
+  // (if any) and all earlier turns.
+  const renderLog = (() => {
+    if (!log || log.length === 0) return [];
+    const last = log[log.length - 1];
+    if (
+      currentTurn?.text
+      && last?.role === "jackie"
+      && last.text === currentTurn.text
+    ) {
+      return log.slice(0, -1);
+    }
+    return log;
+  })();
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [renderLog.length]);
+  if (renderLog.length === 0) return null;
+  return (
+    <div
+      ref={scrollRef}
+      className="vic-glass"
+      style={{
+        width: "100%", maxHeight: 220, overflowY: "auto",
+        padding: "14px 16px", borderRadius: 16,
+        border: "1px solid rgba(47, 217, 244, 0.15)",
+        display: "flex", flexDirection: "column", gap: 10,
+      }}
+    >
+      <div style={{
+        fontSize: 9, fontWeight: 700,
+        color: "rgba(47, 217, 244, 0.55)",
+        textTransform: "uppercase", letterSpacing: "0.2em",
+        fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        Conversation so far
+      </div>
+      {renderLog.map((entry, i) => {
+        const isJackie = entry.role === "jackie";
+        return (
+          <div
+            key={i}
+            style={{
+              display: "flex",
+              justifyContent: isJackie ? "flex-start" : "flex-end",
+            }}
+          >
+            <div style={{
+              maxWidth: "82%",
+              padding: "8px 12px",
+              borderRadius: 12,
+              fontSize: 13, lineHeight: 1.45,
+              background: isJackie
+                ? "rgba(47, 217, 244, 0.10)"
+                : "rgba(255, 255, 255, 0.06)",
+              border: isJackie
+                ? "1px solid rgba(47, 217, 244, 0.22)"
+                : "1px solid rgba(255, 255, 255, 0.08)",
+              color: "var(--vic-on-surface)",
+            }}>
+              <div style={{
+                fontSize: 9, letterSpacing: "0.14em",
+                textTransform: "uppercase", marginBottom: 3,
+                color: isJackie
+                  ? "rgba(47, 217, 244, 0.7)"
+                  : "var(--vic-on-surface-variant)",
+                fontFamily: "'JetBrains Mono', monospace",
+              }}>
+                {isJackie ? personaName : "you"}
+              </div>
+              {entry.text}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ComplaintEditor({ value, onChange, interim, recording, speaking }) {
   // Merge live interim into what the patient sees in the textarea so they
   // can confirm "yes, the system heard me" without scanning a separate

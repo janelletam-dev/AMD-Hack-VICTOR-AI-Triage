@@ -652,3 +652,282 @@ def is_chest_pain(chief_complaint: str | None) -> bool:
     return any(k in cc for k in (
         "chest", "heart", "pressure", "tight", "squeez", "crushing",
     ))
+
+
+# ── Wells score for PE (clinical / pre-imaging) ──────────────────────
+# The Wells score for pulmonary embolism is the most-cited PE
+# pretest-probability tool in US/UK ED practice. The classic 7-item
+# version lives below; we compute a "clinical Wells" from the items
+# that are answerable from the triage history alone (DVT signs, prior
+# DVT/PE, immobilisation/surgery, hemoptysis, malignancy). Tachycardia
+# (HR > 100) and "PE most likely diagnosis" need the bedside vitals
+# / clinician judgment respectively, so we surface them as pending.
+#
+# References:
+#   - Wells PS, Anderson DR, Rodger M, et al. "Excluding pulmonary
+#     embolism at the bedside without diagnostic imaging: management
+#     of patients with suspected pulmonary embolism presenting to the
+#     emergency department by using a simple clinical model and
+#     d-dimer." Ann Intern Med. 2001;135(2):98-107. (Original 7-item
+#     Wells score.)
+#   - Endorsed by 2019 ESC PE Guidelines (Konstantinides 2020) and
+#     NICE NG158 (2020, reviewed 2023) as a validated PE-probability
+#     decision aid.
+#   - Also commonly used: PERC rule (Kline 2008) for very-low-risk
+#     rule-out, YEARS algorithm (van der Hulle 2017) — both rely on
+#     bedside / lab data so out of scope for triage.
+
+# Wells PE risk-factor patterns. The exam item ("clinical signs of
+# DVT") is detected via patient self-report of leg swelling /
+# unilateral calf pain — a real clinician would inspect and palpate
+# but for triage we accept the patient's description as a signal.
+WELLS_PE_PATTERNS: dict[str, list[str]] = {
+    "dvt_signs": [
+        r"\b(?:leg\s+(?:swelling|swollen)|swollen\s+(?:leg|calf)|"
+        r"calf\s+(?:pain|tender)|unilateral\s+leg)\b",
+    ],
+    # Note: "PE most likely diagnosis" (item 2, 3.0 pts) is clinician
+    # gestalt — not detectable from history. We omit it from clinical
+    # Wells and disclose this to the chart.
+    # Note: HR > 100 (item 3, 1.5 pts) is a bedside vital — pending.
+    "immobilisation_or_surgery": [
+        r"\b(?:bed[\s-]?rest|immobil\w+|on\s+a\s+long\s+(?:flight|drive)|"
+        r"long[\s-]haul\s+flight|recent\s+(?:surgery|operation)|"
+        r"surgery\s+(?:last|in\s+the\s+past)\s+\w+|"
+        r"hospital\s+(?:stay|stayed)|broke(?:n)?\s+\w+\s+(leg|hip|ankle)|"
+        r"cast\s+on)\b",
+    ],
+    "prior_dvt_pe": [
+        r"\b(?:i'?ve?\s+had|i\s+had|prior|previous|history\s+of)\s+"
+        r"(?:a\s+)?(?:dvt|pe|pulmonary\s+embol\w*|blood\s+clot|"
+        r"deep\s+vein\s+thrombos\w*)\b",
+    ],
+    "hemoptysis": [
+        r"\b(?:cough(?:ing)?\s+up\s+blood|hemoptysis|blood\s+in\s+(?:my\s+)?(?:cough|sputum|spit))\b",
+    ],
+    "malignancy": [
+        r"\b(?:cancer|malignan\w*|tumour|tumor|chemo(?:therapy)?|"
+        r"on\s+treatment\s+for|metastat\w+|radiation\s+therapy)\b",
+    ],
+}
+
+# Wells point values (Wells 2001).
+_WELLS_POINTS: dict[str, float] = {
+    "dvt_signs":                3.0,
+    "pe_most_likely":            3.0,  # clinician gestalt — pending
+    "tachycardia":               1.5,  # HR > 100 — bedside vital — pending
+    "immobilisation_or_surgery": 1.5,
+    "prior_dvt_pe":              1.5,
+    "hemoptysis":                1.0,
+    "malignancy":                1.0,
+}
+
+
+def detect_wells_factors(text: str) -> list[str]:
+    """Return Wells-score risk factors mentioned in the patient
+    transcript. Only includes factors we can detect from history
+    alone — pe_most_likely (clinician gestalt) and tachycardia
+    (bedside vital) are NOT included."""
+    if not text:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for name, patterns in WELLS_PE_PATTERNS.items():
+        if name in seen:
+            continue
+        for p in patterns:
+            if re.search(p, text, re.IGNORECASE):
+                seen.add(name)
+                found.append(name)
+                break
+    return found
+
+
+def compute_clinical_wells(transcript: str) -> dict:
+    """Compute the partial (pre-bedside-vital, pre-clinician-gestalt)
+    Wells PE score from triage history. Maximum clinical_total is
+    7.5 (out of 12.5) because tachycardia (1.5) and "PE most likely"
+    (3.0) require data we don't have at intake.
+
+    Tier interpretation (per Wells 2001 dichotomous cut):
+      ≤ 4 points: PE unlikely → consider d-dimer
+      > 4 points: PE likely  → consider CTPA / V/Q
+    Our clinical_total is a CONSERVATIVE lower bound — the bedside
+    update could push the patient into "likely" territory, so we
+    flag intermediate scores as "pursue PE workup" rather than rule
+    out at this stage.
+    """
+    factors = detect_wells_factors(transcript or "")
+    total = sum(_WELLS_POINTS[f] for f in factors)
+    return {
+        "score": "Wells",
+        "factors_found": factors,
+        "factor_points": {f: _WELLS_POINTS[f] for f in factors},
+        "pe_most_likely": {"points": None, "note": "Clinician gestalt — pending"},
+        "tachycardia": {"points": None, "note": "Pending bedside vitals (HR)"},
+        "clinical_total": total,
+        "max_clinical": 7.5,
+        "max_full": 12.5,
+        "interpretation": _wells_interpretation(total, len(factors)),
+    }
+
+
+def _wells_interpretation(clinical_total: float, n_factors: int) -> str:
+    if clinical_total >= 4.5:
+        return "PE concerning — pursue CTPA / V-Q workup"
+    if clinical_total >= 1.5 or n_factors:
+        return "Intermediate — d-dimer indicated, watch for HR > 100"
+    return "Low pre-test probability (history-only)"
+
+
+def is_dyspnea_or_pe_concern(chief_complaint: str | None) -> bool:
+    """Trigger condition for Wells/PE scoring. Fires for explicit SOB
+    complaints AND for chest pain that mentions pleuritic / sharp
+    quality (atypical for ACS, classic for PE)."""
+    if not chief_complaint:
+        return False
+    cc = chief_complaint.lower()
+    if any(k in cc for k in (
+        "breath", "breathing", "short of breath", "sob", "can't breathe",
+        "dyspnea", "winded",
+    )):
+        return True
+    # Pleuritic chest pain — sharp/stabbing, worse with breathing
+    if "chest" in cc and any(k in cc for k in ("pleuritic", "sharp", "stabbing")):
+        return True
+    return False
+
+
+# ── Alvarado score for appendicitis (clinical / pre-bedside) ─────────
+# The Alvarado (MANTRELS) score is the classic appendicitis decision
+# tool. Original 1986 derivation has limited specificity in modern
+# cohorts; AAS (Sammalkorpi 2014) and AIR (Andersson 2008) outperform
+# it but require lab data (WBC, CRP) we don't have at triage. We
+# implement classic Alvarado for the items detectable from history;
+# bedside (RLQ tenderness, rebound, fever) and lab (WBC, left shift)
+# are flagged as pending.
+#
+# References:
+#   - Alvarado A. "A practical score for the early diagnosis of
+#     acute appendicitis." Ann Emerg Med. 1986;15(5):557-564.
+#   - Sammalkorpi HE et al. "A new adult appendicitis score improves
+#     diagnostic accuracy of acute appendicitis — a prospective
+#     study." BMC Gastroenterol. 2014;14:114. (AAS, more accurate.)
+#   - Andersson M, Andersson RE. "The appendicitis inflammatory
+#     response score: a tool for the diagnosis of acute appendicitis
+#     that outperforms the Alvarado score." World J Surg.
+#     2008;32:1843-1849. (AIR, current best for adults.)
+#   - ACR Appropriateness Criteria: Right Lower Quadrant Pain (2023
+#     update) — guidance on when to image, complementary to scoring.
+
+ALVARADO_PATTERNS: dict[str, list[str]] = {
+    # M — Migration of pain to RLQ (1 pt). Patient self-report:
+    # "started near my belly button and moved to the right side".
+    "migration": [
+        r"\b(?:moved\s+(?:to|into)|migrat\w*|started\s+\w+\s+then\s+(?:moved|went)|"
+        r"first\s+(?:in|near)\s+\w+\s+(?:then|now)|"
+        r"belly\s+button\s+\w*\s*(?:then|now|now\s+it'?s)|"
+        r"middle\s+(?:and|then)\s+(?:moved|went))\b",
+    ],
+    # A — Anorexia (1 pt)
+    "anorexia": [
+        r"\b(?:no\s+appetite|lost\s+(?:my\s+)?appetite|don'?t\s+feel\s+like\s+eating|"
+        r"can'?t\s+eat|haven'?t\s+been\s+eating|anorexi\w+|"
+        r"food\s+(?:doesn'?t|does\s+not)\s+(?:appeal|look\s+good))\b",
+    ],
+    # N — Nausea / vomiting (1 pt)
+    "nausea_vomiting": [
+        r"\b(?:nause\w+|sick\s+to\s+my\s+stomach|throwing\s+up|vomit\w+|"
+        r"have\s+been\s+sick|got\s+sick)\b",
+    ],
+    # T — Tenderness in RLQ (2 pts) — exam finding, not history
+    # R — Rebound tenderness (1 pt) — exam finding, not history
+    # E — Elevated temperature ≥ 37.3°C (1 pt) — bedside vital
+    # We allow patient self-report of fever as a soft signal:
+    "self_reported_fever": [
+        r"\b(?:fever|i\s+have\s+a\s+temperature|hot|sweat\w+|chills|"
+        r"feverish|burning\s+up)\b",
+    ],
+    # L — Leukocytosis ≥ 10,000 (2 pts) — lab, NA at triage
+    # S — Shift to left of WBC ≥ 75% PMN (1 pt) — lab, NA at triage
+}
+
+_ALVARADO_POINTS: dict[str, float] = {
+    "migration":              1.0,
+    "anorexia":               1.0,
+    "nausea_vomiting":        1.0,
+    "self_reported_fever":    1.0,  # weaker signal than measured fever
+    # Bedside / lab pending:
+    "rlq_tenderness":         2.0,
+    "rebound_tenderness":     1.0,
+    "leukocytosis":           2.0,
+    "left_shift":             1.0,
+}
+
+
+def detect_alvarado_factors(text: str) -> list[str]:
+    if not text:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for name, patterns in ALVARADO_PATTERNS.items():
+        if name in seen:
+            continue
+        for p in patterns:
+            if re.search(p, text, re.IGNORECASE):
+                seen.add(name)
+                found.append(name)
+                break
+    return found
+
+
+def compute_clinical_alvarado(transcript: str) -> dict:
+    """Compute the partial (pre-bedside, pre-lab) Alvarado score from
+    triage history. Maximum clinical_total is 4 (out of 10) because
+    RLQ tenderness, rebound, WBC, and left shift all need data we
+    don't have at intake.
+
+    Tier interpretation (Alvarado 1986 cuts):
+      ≤ 3:  appendicitis unlikely
+      4-6:  appendicitis possible — observation / imaging
+      ≥ 7:  appendicitis likely — surgical consult
+    Our clinical_total is a conservative lower bound; the bedside
+    + lab additions could push it higher.
+    """
+    factors = detect_alvarado_factors(transcript or "")
+    total = sum(_ALVARADO_POINTS[f] for f in factors)
+    return {
+        "score": "Alvarado",
+        "factors_found": factors,
+        "factor_points": {f: _ALVARADO_POINTS[f] for f in factors},
+        "rlq_tenderness": {"points": None, "note": "Pending bedside exam"},
+        "rebound_tenderness": {"points": None, "note": "Pending bedside exam"},
+        "fever_measured": {"points": None, "note": "Pending bedside vital"},
+        "leukocytosis": {"points": None, "note": "Pending CBC"},
+        "left_shift": {"points": None, "note": "Pending CBC differential"},
+        "clinical_total": total,
+        "max_clinical": 4.0,
+        "max_full": 10.0,
+        "interpretation": _alvarado_interpretation(total, len(factors)),
+    }
+
+
+def _alvarado_interpretation(clinical_total: float, n_factors: int) -> str:
+    if clinical_total >= 3:
+        return "Appendicitis concerning — RLQ exam + CBC + imaging indicated"
+    if n_factors >= 1:
+        return "Possible — observation + bedside exam"
+    return "Low pre-test probability (history-only)"
+
+
+def is_abdominal_pain(chief_complaint: str | None) -> bool:
+    """Trigger condition for Alvarado scoring. Fires for any abdominal
+    chief complaint — Alvarado's history items (migration, anorexia,
+    n/v) apply broadly to the GI workup, not just suspected appendicitis.
+    Low-probability scores correctly read as low-probability."""
+    if not chief_complaint:
+        return False
+    cc = chief_complaint.lower()
+    return any(k in cc for k in (
+        "abdom", "stomach", "belly", "gut", "rlq", "right lower", "appendix",
+    ))

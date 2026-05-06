@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 import struct
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,6 +85,7 @@ class ThymiaService:
         date_of_birth: str | None = None,
         birth_sex: str = "UNKNOWN",
         language: str = "en-US",
+        transcript: str | None = None,
     ) -> HeliosResult | None:
         """Run Helios on a single complete WAV recording.
 
@@ -91,21 +93,16 @@ class ThymiaService:
         None if disabled/failed. Logs (does not raise) for transport errors.
 
         When `settings.demo_mode` is true, returns scripted biomarker values
-        (matching frontend `DEMO_EVENTS`) without hitting the real Thymia API
-        — guarantees the concordance flag fires at demo time regardless of
-        how the demoer actually sounds.
+        without hitting the real Thymia API — guarantees the concordance
+        flag fires at demo time regardless of how the demoer actually
+        sounds. If a `transcript` is supplied, the scripted baseline is
+        nudged up by patient-spoken stress/exhaustion keywords ("I'm
+        exhausted" → exhaustion bumps from 0.33 → 0.65) so the demo
+        biomarkers respond to what the patient actually says, instead
+        of staying frozen at a single canned snapshot.
         """
         if settings.demo_mode:
-            log.info("demo mode: returning scripted helios result (no API call)")
-            return HeliosResult(
-                stress=0.66,
-                distress=0.66,
-                exhaustion=0.33,
-                sleep_propensity=0.0,
-                low_self_esteem=0.0,
-                mental_strain=0.68,
-                raw={"demo_mode": True},
-            )
+            return _demo_helios_result(transcript)
         if not self.enabled:
             return None
         if not wav_bytes:
@@ -182,6 +179,89 @@ class ThymiaService:
 
             log.warning("helios poll timed out (run=%s, %.0fs)", run_id, elapsed)
             return None
+
+
+# Demo-mode biomarker generator. Starts at the canned "atypical CVD"
+# baseline (mirrors what the dashboard's scripted DEMO_EVENTS shows so
+# the swarm story still works on a fresh kiosk) and bumps individual
+# axes when the patient surfaces matching stress/exhaustion keywords
+# in their narrative. The clip-to-0.95 ceiling avoids saturated 1.0
+# values that look fake on the gauges.
+_DEMO_BASELINE = {
+    "stress":          0.66,
+    "distress":        0.66,
+    "exhaustion":      0.33,
+    "mental_strain":   0.68,
+    "sleep_propensity": 0.0,
+    "low_self_esteem": 0.0,
+}
+
+# Keyword → (axis, bump) tuples. Each phrase that fires adds its bump
+# to the corresponding axis (capped at 0.95 below). Phrases are
+# deliberately liberal — false positives just make the gauges read
+# more concerning, which is the right failure mode for an ED triage
+# kiosk where missing distress is worse than over-flagging.
+_DEMO_TRANSCRIPT_BUMPS: list[tuple[str, str, float]] = [
+    # Exhaustion
+    (r"\b(exhaust\w*|wiped\s+out|drained|no\s+energy|so\s+tired|"
+     r"can'?t\s+keep\s+going|burned?\s+out)\b",                     "exhaustion",      0.40),
+    (r"\b(tired|fatigu\w+|worn\s+out)\b",                            "exhaustion",      0.20),
+    # Stress / anxiety
+    (r"\b(stressed?|anxious|anxiety|worried|nervous|on\s+edge|"
+     r"overwhelm\w+)\b",                                              "stress",          0.20),
+    (r"\b(panic\w*|freaking\s+out|losing\s+it)\b",                   "stress",          0.30),
+    # Distress (acute)
+    (r"\b(scared|terrified|frightened|afraid|something'?s\s+wrong|"
+     r"this\s+is\s+(bad|serious))\b",                                 "distress",        0.25),
+    (r"\b(can'?t\s+breathe|can'?t\s+catch\s+my\s+breath|"
+     r"chest\s+(pain|tight|pressure)|crushing|elephant)\b",          "distress",        0.30),
+    # Sleep
+    (r"\b(haven'?t\s+slept|no\s+sleep|insomnia|can'?t\s+sleep|"
+     r"awake\s+all\s+night|been\s+up\s+all\s+night)\b",              "sleep_propensity", 0.55),
+    (r"\b(trouble\s+sleeping|poor\s+sleep|restless\s+night)\b",      "sleep_propensity", 0.30),
+    # Mental strain
+    (r"\b(can'?t\s+think|can'?t\s+focus|foggy|brain\s+fog|"
+     r"confused|mind\s+racing)\b",                                    "mental_strain",   0.20),
+    # Low self-esteem / minimisation (the demo's bias-detection signal)
+    (r"\b(don'?t\s+want\s+to\s+bother|i'?m\s+probably\s+fine|"
+     r"shouldn'?t\s+have\s+come|just\s+(me|being)|"
+     r"it'?s\s+probably\s+nothing|"
+     r"sorry\s+(for|to))\b",                                          "low_self_esteem", 0.45),
+]
+
+
+def _demo_helios_result(transcript: str | None) -> HeliosResult:
+    """Compute a transcript-aware demo Helios result.
+
+    Without a transcript (initial submission before any complaint text
+    is available), returns the canned baseline. With a transcript,
+    scans for keyword matches and bumps the relevant biomarker axes
+    so the demo gauges respond to what the patient said. Used by
+    submit_helios when settings.demo_mode is true.
+    """
+    scores = dict(_DEMO_BASELINE)
+    if transcript:
+        text = transcript.lower()
+        for pattern, axis, bump in _DEMO_TRANSCRIPT_BUMPS:
+            if re.search(pattern, text, re.IGNORECASE):
+                scores[axis] = min(0.95, scores[axis] + bump)
+    matched = [
+        axis for pattern, axis, _ in _DEMO_TRANSCRIPT_BUMPS
+        if transcript and re.search(pattern, transcript, re.IGNORECASE)
+    ]
+    log.info(
+        "demo mode helios: returning scripted result (matched=%s)",
+        sorted(set(matched)) or "baseline",
+    )
+    return HeliosResult(
+        stress=scores["stress"],
+        distress=scores["distress"],
+        exhaustion=scores["exhaustion"],
+        sleep_propensity=scores["sleep_propensity"],
+        low_self_esteem=scores["low_self_esteem"],
+        mental_strain=scores["mental_strain"],
+        raw={"demo_mode": True, "matched_keywords": sorted(set(matched))},
+    )
 
 
 def _parse_helios(payload: dict[str, Any]) -> HeliosResult:
