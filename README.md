@@ -356,6 +356,57 @@ prompt structures, and reasoning-task definitions. V2 work can adopt
 that scaffolding without waiting for the gated data — apply for data
 access in parallel.
 
+### V2 outcome-validation path — MIMIC-IV-Ext-MDS-ED
+
+ER-REASON validates V.I.C.T.O.R.'s reasoning fidelity cross-institution.
+The complementary V2 dataset is
+[**MIMIC-IV-Ext-MDS-ED**](https://physionet.org/content/multimodal-emergency-benchmark/1.0.0/) —
+"Multimodal Decision Support in the Emergency Department" (released
+Sept 2024) — which closes the *outcome* side of the under-triage
+claim:
+
+- 129,095 ECG records (waveforms resampled to 100 Hz)
+- Tabular clinical data: demographics, biometrics, **vital signs with
+  trends**, **laboratory values with trends**
+- 1,428 ICD-10 diagnostic codes
+- **15 deterioration labels** covering 6 clinical deterioration
+  conditions, ICU admission (2 time horizons), and **mortality at 7
+  time horizons** (24h / 48h / 72h / 7d / 14d / 30d / 90d)
+- Derived from the same MIMIC-IV cohort the bias dictionary is built
+  on — retrospective pairing of triage-characteristics with outcomes
+  is straightforward.
+
+The under-triage claim is operationally *"patients V.I.C.T.O.R. would
+have flagged at triage had outcomes worse than their assigned acuity
+predicted."* MIMIC-IV-Ext-MDS-ED has the outcome chain that
+proposition needs. Specifically:
+
+| V2 use case | Method | Question answered |
+|---|---|---|
+| Outcome-grounded specificity | Run concordance engine on MIMIC-IV triage data; check 24h/72h deterioration rate in flagged vs unflagged patients | "Does flagging correlate with actual deterioration, or just with stress?" |
+| HEART score validation | Pair triage-time HEART against subsequent ECG findings + 30d cardiac mortality | "Do V.I.C.T.O.R.'s clinical risk modules predict the right thing?" |
+| Demographic-stratified outcome bias | Repeat outcome analysis stratified by sex, age, ethnicity | "Does the bias gap show up in mortality, not just acuity?" |
+
+Access requirements: PhysioNet credentialed status + CITI training
++ DUA. Same gating profile as ER-REASON, ~14-day timeline.
+
+### The complete V2 validation portfolio
+
+V.I.C.T.O.R.'s three named V2 validation datasets, each closing a
+different gap:
+
+| Dataset | Side validated | Gap closed |
+|---|---|---|
+| [MIMIC-IV-Ext-MDS-ED](https://physionet.org/content/multimodal-emergency-benchmark/1.0.0/) | Outcomes (deterioration / ICU / mortality) | "What if a flag fires but the patient is fine?" |
+| [ER-REASON (UCSF)](https://physionet.org/content/er-reason/1.0.0/) | Reasoning + cross-institutional generalization | "MIMIC is one hospital — does this generalize?" |
+| [Bridge2AI-Voice](https://physionet.org/content/b2ai-voice/3.1.0/) | Acoustic-affect side | "Are voice biomarkers measuring what you say?" |
+
+Together they cover text, outcomes, and audio — the three modalities
+V.I.C.T.O.R.'s conjunctive concordance signal depends on. A V2
+prospective study at a partner ED would replace each with that
+institution's own data; the three PhysioNet datasets are the bridge
+that gets the methodology right before the prospective phase.
+
 ---
 
 ## Clinical safety architecture
