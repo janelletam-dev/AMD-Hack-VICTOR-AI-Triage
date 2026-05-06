@@ -167,8 +167,14 @@ npm run dev
 
 Three views are available:
 
-- <http://localhost:5173/patient> — kiosk: 3-phase voice intake (name → DOB → reason for visit) with confirmation cards.
-- <http://localhost:5173/clinician> — V.I.C.T.O.R. dashboard: live transcript, captured intake, biomarkers, SOAP draft, 5-agent swarm panel.
+- <http://localhost:5173/patient> — kiosk: 6-phase voice intake (first name → last name → DOB → sex at birth → reason for visit → J.A.C.K.I.E. follow-up loop). Editable input cards on identity phases let the patient correct STT mistranscriptions inline before tapping Send. The complaint phase and conversation phase use the same editable-textarea pattern. Optional nurse-assisted entry path on welcome screen + mid-interview pill.
+- <http://localhost:5173/clinician> — V.I.C.T.O.R. dashboard:
+    - **Identity card** with SCRIBE-distilled chief complaint, suspected diagnosis (top concordance flag), and verbatim accordion (patient's own words + live transcript)
+    - **Clinical risk score badges** — HEART (chest pain), Wells (PE), Alvarado (appendicitis), each with H/A/R or factor-level breakdown and bedside-pending disclosures
+    - **Voice biomarkers** — three thymia profiles stacked: Helios (stress/distress/exhaustion/sleep/strain), Apollo (valence/arousal/energy/engagement), Psyche (dominant emotion + 7-axis distribution)
+    - **Concordance Report** panel — verbal–acoustic mismatch detection. Renders one card per fired flag with the patient quote, the matched minimisation phrase highlighted in tier color, breaching biomarker chips, and M.E.R.C.E.D.'s clinical gloss. "ALIGNED" green banner when no flags
+    - **SOAP note** auto-composed by S.C.R.I.B.E. with real ED HPI format (Bates' 7 dimensions + pertinent positives + pertinent negatives inline)
+    - **Swarm panel** showing live agent activity
 - <http://localhost:5173/clinician/epic> — Epic-style EMR view: patient banner, ESI acuity, concordance flag, SOAP, and clinician sign-off.
 
 Captured fields propagate from the patient kiosk to the clinician dashboard and EMR view in the same browser tab; a hard refresh clears them.
