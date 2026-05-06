@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { Clock, MessageCircle, Gauge, Flag, Venus, Mars, Transgender, Minus } from "lucide-react";
+import { Clock, MessageCircle, Gauge, Flag, Venus, Mars, Transgender, Minus, Mic } from "lucide-react";
 import VoiceSelector from "../components/VoiceSelector.jsx";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import { useAudioCapture } from "../hooks/useAudioCapture.js";
@@ -460,6 +460,9 @@ export default function PatientView() {
   // gets a soft "I'm still here, take your time" cue BEFORE the silence
   // timer commits at 2500ms. Cleared on every new partial.
   const [stillListening, setStillListening] = useState(false);
+  // Gender phase: when the patient picks "Other" we switch from the 4-card
+  // picker to mic mode (the patient speaks freely). Cleared on phase change.
+  const [genderOtherMode, setGenderOtherMode] = useState(false);
   const lastTranscriptUpdateAtRef = useRef(0);
   const stillListeningTimerRef = useRef(null);
   // Editable accumulating transcript for the complaint phase. Each
@@ -867,6 +870,7 @@ export default function PatientView() {
     setComplaintDraft("");  // fresh editable textarea for new interview
     setConfirm(null);
     setParseError("");
+    setGenderOtherMode(false);
     // Reset the cross-view store at the start of a new interview.
     clearIdentity();
   };
@@ -958,11 +962,25 @@ export default function PatientView() {
         setConfirm({ phase: "dob", value: r.value });
         playTTS(confirmTTS(voice, "dob", r.value), scheduleMicRestart);
       }
+    } else if (phase === "gender") {
+      // Voice-mode gender entry (the patient tapped "Other" then spoke).
+      // Take the transcript verbatim, write it to identity, advance.
+      // No confirm card — keeps the flow snappy. If the transcript is
+      // garbled the clinician can edit on the dashboard's identity card.
+      const value = captured.charAt(0).toUpperCase() + captured.slice(1);
+      setAnswers((a) => ({ ...a, gender: value }));
+      setStoreIdentity({ gender: value });
+      send && send({ type: "identity_update", data: { gender: value } });
+      setGenderOtherMode(false);
+      phaseTextRef.current = "";
+      lastFinalRef.current = "";
+      setInterimText("");
+      if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
     } else {
       // complaint — keep the text as-is, no confirmation required
       setAnswers((a) => ({ ...a, complaint: captured }));
     }
-  }, [phase, voice, stop, interimText, playTTS, scheduleMicRestart]);
+  }, [phase, phaseIdx, voice, stop, interimText, playTTS, scheduleMicRestart, send]);
 
   const onConfirmYes = useCallback(() => {
     if (!confirm) return;
@@ -1055,6 +1073,27 @@ export default function PatientView() {
     if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
   }, [phaseIdx, send]);
 
+  // "Other" tap on the gender picker → switch to mic mode and let the
+  // patient speak. The captured transcript becomes the gender field via
+  // handleStopMic's gender branch (below).
+  const selectGenderOther = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+      setTtsState("idle");
+    }
+    setGenderOtherMode(true);
+    phaseTextRef.current = "";
+    lastFinalRef.current = "";
+    setInterimText("");
+    playTTS("Sure — go ahead, tell me how you'd like to be identified.", () => {
+      setTimeout(() => {
+        const startFn = micStartRef.current;
+        if (startFn) startFn();
+      }, 250);
+    });
+  }, [playTTS]);
+
   // Text input fallback — when mic is blocked, patient types instead.
   // Simulates a transcript event so the same parsing/confirm flow runs.
   const handleTextSubmit = useCallback((text) => {
@@ -1076,9 +1115,22 @@ export default function PatientView() {
       setConfirm({ phase: "dob", value: r.value });
       if (r.skipped) playTTS("That's okay — we'll skip that.");
       else playTTS(confirmTTS(voice, "dob", r.value));
+    } else if (phase === "gender") {
+      // Mic-blocked fallback path for the "Other" voice-input branch:
+      // patient types instead of speaking. Save + advance directly,
+      // mirroring the handleStopMic gender behaviour.
+      const value = text.charAt(0).toUpperCase() + text.slice(1);
+      setAnswers((a) => ({ ...a, gender: value }));
+      setStoreIdentity({ gender: value });
+      send && send({ type: "identity_update", data: { gender: value } });
+      setGenderOtherMode(false);
+      phaseTextRef.current = "";
+      lastFinalRef.current = "";
+      setInterimText("");
+      if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
     }
     // For complaint/conversation, the text is just captured.
-  }, [phase, voice, playTTS]);
+  }, [phase, phaseIdx, voice, playTTS, send]);
 
   // Bind handler refs AFTER their useCallbacks are declared, so the
   // memoized onEvent closure can call them via ref without TDZ issues.
@@ -1192,6 +1244,8 @@ export default function PatientView() {
             onConfirmRetry={onConfirmRetry}
             onTextSubmit={handleTextSubmit}
             onSelectGender={selectGender}
+            onSelectGenderOther={selectGenderOther}
+            genderOtherMode={genderOtherMode}
           />
         )}
         {step === "done" && <Done room={room} answers={answers} />}
@@ -1367,7 +1421,7 @@ function Interview({
   framesSent, noisy, processingState, spellingMode, stillListening,
   complaintDraft, onComplaintDraftChange,
   onStart, onStopMic, onCancel, onAdvance, onConfirmYes, onConfirmRetry,
-  onTextSubmit, onRestart, onSelectGender,
+  onTextSubmit, onRestart, onSelectGender, onSelectGenderOther, genderOtherMode,
 }) {
   const recording = micState === "recording";
   const error = micState === "error";
@@ -1407,6 +1461,7 @@ function Interview({
   else if (isConvo && jackieTurn?.closing) subline = "All done — a clinician will be with you soon.";
   else if (isConvo) subline = "Take your time — answer when you're ready.";
   else if (captured && phase === "complaint") subline = `Thanks for sharing. Tap "I'm done" when you've said everything, or keep talking.`;
+  else if (phase === "gender" && genderOtherMode) subline = "Go ahead — tell me however you'd like.";
   else if (phase === "gender") subline = "Tap whichever fits — your chart, your call.";
   else subline = "Just a moment — getting ready to listen.";
 
@@ -1441,12 +1496,12 @@ function Interview({
         {thinking && <ThinkingDots personaName={personaName} />}
       </div>
 
-      {!isConfirming && phase !== "gender" && (
+      {!isConfirming && (phase !== "gender" || genderOtherMode) && (
         <MicCircle recording={recording} error={error} onClick={recording ? onStopMic : onStart} />
       )}
 
-      {phase === "gender" && !isConfirming && (
-        <GenderPicker onSelect={onSelectGender} />
+      {phase === "gender" && !isConfirming && !genderOtherMode && (
+        <GenderPicker onSelect={onSelectGender} onOther={onSelectGenderOther} />
       )}
 
       {/* Soft "I'm still here" cue during the open-ended complaint phase.
@@ -1479,7 +1534,7 @@ function Interview({
 
       {isConfirming ? (
         <ConfirmCard confirm={confirm} onYes={onConfirmYes} onRetry={onConfirmRetry} />
-      ) : phase === "gender" ? null : phase === "complaint" ? (
+      ) : (phase === "gender" && !genderOtherMode) ? null : phase === "complaint" ? (
         // Editable textarea — accumulates each finalised utterance and
         // shows the running interim partial below it. Patient can fix
         // mistranscriptions before tapping Send. What you see is what
@@ -1828,54 +1883,91 @@ function MicCircle({ recording, error, onClick }) {
 // Big lucide icons (Venus / Mars / Transgender / Minus) make this read
 // at a glance for distressed or visually-impaired patients — the icon
 // is the affordance, the label confirms the meaning.
-function GenderPicker({ onSelect }) {
+function GenderPicker({ onSelect, onOther }) {
   const opts = [
     { value: "Female",            Icon: Venus },
     { value: "Male",              Icon: Mars },
     { value: "Non-binary",        Icon: Transgender },
     { value: "Prefer not to say", Icon: Minus },
   ];
+  // Shared card style — used by both the 4 icon options and the "Other" mic
+  // button so they read as one set with an obvious affordance hierarchy
+  // (icons first, voice fallback below).
+  const cardStyle = {
+    display: "flex", flexDirection: "column",
+    alignItems: "center", justifyContent: "center", gap: 14,
+    padding: "28px 20px", borderRadius: 24,
+    background: "linear-gradient(135deg, rgba(47, 217, 244, 0.08), rgba(0, 142, 161, 0.04))",
+    border: "1px solid rgba(47, 217, 244, 0.25)",
+    color: "var(--vic-on-surface)",
+    fontWeight: 700, fontSize: 16, letterSpacing: "0.02em",
+    cursor: "pointer",
+    minHeight: 160,
+    boxShadow: "0 8px 30px rgba(47, 217, 244, 0.08)",
+    transition: "transform .12s, border-color .12s, background .12s",
+  };
+  const cardHoverIn = (e) => {
+    e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.5)";
+    e.currentTarget.style.background = "linear-gradient(135deg, rgba(47, 217, 244, 0.14), rgba(0, 142, 161, 0.08))";
+  };
+  const cardHoverOut = (e) => {
+    e.currentTarget.style.transform = "scale(1)";
+    e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.25)";
+    e.currentTarget.style.background = "linear-gradient(135deg, rgba(47, 217, 244, 0.08), rgba(0, 142, 161, 0.04))";
+  };
   return (
     <div style={{
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-      gap: 16,
-      maxWidth: 720, width: "100%",
+      display: "flex", flexDirection: "column", gap: 16,
+      maxWidth: 480, width: "100%",
       padding: "0 24px",
     }}>
-      {opts.map(({ value, Icon }) => (
-        <button
-          key={value}
-          onClick={() => onSelect(value)}
-          style={{
-            display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center", gap: 14,
-            padding: "28px 20px", borderRadius: 24,
-            background: "linear-gradient(135deg, rgba(47, 217, 244, 0.08), rgba(0, 142, 161, 0.04))",
-            border: "1px solid rgba(47, 217, 244, 0.25)",
-            color: "var(--vic-on-surface)",
-            fontWeight: 700, fontSize: 16, letterSpacing: "0.02em",
-            cursor: "pointer",
-            minHeight: 160,
-            boxShadow: "0 8px 30px rgba(47, 217, 244, 0.08)",
-            transition: "transform .12s, border-color .12s, background .12s",
-          }}
-          onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.97)")}
-          onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "scale(1)";
-            e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.25)";
-            e.currentTarget.style.background = "linear-gradient(135deg, rgba(47, 217, 244, 0.08), rgba(0, 142, 161, 0.04))";
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.5)";
-            e.currentTarget.style.background = "linear-gradient(135deg, rgba(47, 217, 244, 0.14), rgba(0, 142, 161, 0.08))";
-          }}
-        >
-          <Icon size={56} strokeWidth={1.5} color="var(--vic-primary)" />
-          <span>{value}</span>
-        </button>
-      ))}
+      {/* 2×2 grid of the four standard options */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, 1fr)",
+        gap: 16,
+      }}>
+        {opts.map(({ value, Icon }) => (
+          <button
+            key={value}
+            onClick={() => onSelect(value)}
+            style={cardStyle}
+            onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.97)")}
+            onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            onMouseLeave={cardHoverOut}
+            onMouseEnter={cardHoverIn}
+          >
+            <Icon size={56} strokeWidth={1.5} color="var(--vic-primary)" />
+            <span>{value}</span>
+          </button>
+        ))}
+      </div>
+      {/* "Other" — voice fallback for anyone whose identity isn't in the
+          four shorthand options. Tap → mic activates and the patient
+          speaks freely; the transcript becomes the gender field on the
+          chart. Uses the Mic lucide icon so the affordance ("speak") is
+          unambiguous from the icon alone. */}
+      <button
+        onClick={onOther}
+        style={{ ...cardStyle, minHeight: 96, padding: "20px" }}
+        onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.97)")}
+        onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+        onMouseLeave={cardHoverOut}
+        onMouseEnter={cardHoverIn}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <Mic size={36} strokeWidth={1.5} color="var(--vic-primary)" />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+            <span style={{ fontSize: 16, fontWeight: 700 }}>Other</span>
+            <span style={{
+              fontSize: 12, fontWeight: 400, opacity: 0.7,
+              color: "var(--vic-on-surface-variant)",
+            }}>
+              Tap and tell me in your own words
+            </span>
+          </div>
+        </div>
+      </button>
     </div>
   );
 }
