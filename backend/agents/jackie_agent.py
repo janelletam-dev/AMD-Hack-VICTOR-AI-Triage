@@ -12,6 +12,7 @@ Latency budget: <1s per response.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from services.vllm_service import ChatMessage, LLMUnavailable, VLLMService
@@ -100,6 +101,11 @@ class JackieAgent:
                 max_tokens=120,
             )
             text = text.strip().strip('"').strip()
+            # Strip parenthetical "internal monologue" asides — the fine-tuned
+            # model occasionally appends notes like "(I'm looking for more info
+            # on the nausea.)" which ElevenLabs would read aloud verbatim. The
+            # patient should hear only the actual question.
+            text = re.sub(r"\s*\([^)]*\)\s*", " ", text).strip()
             if not text:
                 raise ValueError("empty LLM response")
             return text
