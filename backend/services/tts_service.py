@@ -51,10 +51,21 @@ class TTSService:
             "accept": "audio/mpeg",
             "content-type": "application/json",
         }
+        # Voice settings tuned for ER triage register: brisk + competent,
+        # not therapy-soft. Higher stability → less melodramatic delivery
+        # (more measured, like an experienced clinician). Style at 0.15 keeps
+        # delivery conversational without theatrical inflection. similarity_boost
+        # stays at 0.75 so the voice still sounds like the chosen persona, not
+        # a generic narrator.
         body = {
             "text": text,
             "model_id": MODEL_ID,
-            "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+            "voice_settings": {
+                "stability": 0.65,
+                "similarity_boost": 0.75,
+                "style": 0.15,
+                "use_speaker_boost": True,
+            },
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream("POST", url, headers=headers, json=body) as r:

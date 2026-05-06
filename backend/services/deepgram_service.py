@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import struct
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -34,6 +35,29 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from config import settings
+
+
+def _streaming_wav_header(sample_rate: int = 16_000, channels: int = 1) -> bytes:
+    """Build a 44-byte RIFF/WAVE header for an open-ended PCM16 stream.
+
+    Flux v2 auto-detects audio format from the byte stream. Without a header
+    it returns UNPARSABLE_CLIENT_MESSAGE. We prepend this header once on
+    connection so Flux identifies the stream as little-endian signed 16-bit
+    PCM at 16 kHz mono; subsequent raw PCM frames continue the WAV `data`
+    payload. The size fields are set to 0xFFFFFFFF so the reader treats it
+    as an unbounded stream rather than checking against a declared length.
+    """
+    bits_per_sample = 16
+    byte_rate = sample_rate * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+    huge = 0xFFFFFFFF
+    fmt_chunk = struct.pack(
+        "<4sIHHIIHH",
+        b"fmt ", 16, 1, channels, sample_rate, byte_rate, block_align, bits_per_sample,
+    )
+    data_chunk = struct.pack("<4sI", b"data", huge)
+    riff = struct.pack("<4sI4s", b"RIFF", huge, b"WAVE")
+    return riff + fmt_chunk + data_chunk
 
 log = logging.getLogger("victor.deepgram")
 
@@ -179,6 +203,14 @@ class DeepgramService:
 
     async def _writer(self) -> None:
         assert self._ws is not None
+        # Identify the stream format to Flux v2 before any audio bytes flow.
+        # Without this, Flux returns UNPARSABLE_CLIENT_MESSAGE on the first frame.
+        try:
+            await self._ws.send(_streaming_wav_header(settings.sample_rate_hz, 1))
+            log.info("deepgram: sent streaming WAV header (16-bit PCM, %d Hz, mono)", settings.sample_rate_hz)
+        except Exception:
+            log.exception("deepgram: failed to send WAV header")
+            return
         try:
             while True:
                 frame = await self._tx_queue.get()
