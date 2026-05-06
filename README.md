@@ -286,6 +286,108 @@ for the broader vision V.I.C.T.O.R. positions as a downstream application of.
 
 ---
 
+## Clinical safety architecture
+
+Safety in V.I.C.T.O.R. is not a single layer. The system uses
+defense-in-depth so that no single component — and especially not the
+LLM — can be the only thing standing between a patient and a missed
+escalation. Five layers, ordered from outermost (always-on regardless
+of LLM state) to innermost:
+
+### 1. Hardcoded ESI-1 / ESI-2 escalation, BEFORE the LLM
+[`backend/engine/concordance.py`](backend/engine/concordance.py) defines
+two regex tables that fire on the transcript without ever consulting
+the LoRA:
+
+- `EMERGENCY_KEYWORDS` (ESI-1, immediate): airway/breathing
+  ("can't breathe", "choking", "turning blue"), crushing chest pain
+  ("elephant on my chest", "10/10 chest pain"), subjective collapse
+  ("I'm dying", "going to pass out"), major haemorrhage ("bleeding
+  badly", "vomiting blood"), stroke signs ("face is drooping", "worst
+  headache of my life", sudden weakness/numbness/confusion).
+- `SAFETY_KEYWORDS_ESI2` (ESI-2, urgent): chest pain, breathing
+  difficulty, cardiac concern phrases, "feel like dying."
+
+`detect_emergency()` and `detect_safety_escalation()` run on every
+final transcript line and publish `triage_emergency` / `safety_escalation`
+events directly to the bus. The LoRA's reasoning is downstream of this
+floor — even if it hallucinates or stalls, the escalation has already
+fired. From the source: *"Never rely solely on AI for life-threatening
+keywords."*
+
+### 2. JACKIE prompt-level safety rules
+[`backend/prompts/jackie_system.txt`](backend/prompts/jackie_system.txt)
+embeds explicit safety guardrails the LoRA must obey:
+
+- **Never diagnose. Never reassure prematurely.** ("I'm sure it's nothing"
+  is forbidden phrasing.)
+- **Privacy in public spaces.** The kiosk is in a waiting area; JACKIE
+  does not echo back disclosures of HIV status, drug use, sexual
+  history, abuse, or mental-health history aloud — only acknowledges
+  receipt. The transcript is visible to clinicians on the dashboard,
+  never spoken via TTS.
+- **Hallucination boundary on diagnostic questions.** "Am I having a
+  heart attack?" → scripted non-diagnostic response (*"I can't make
+  that call — but a clinician will see you very soon."*)
+- **Instant-escalation phrases.** If the patient says any of: "I can't
+  breathe," "my chest is crushing," "I think I'm dying," "10/10 chest
+  pain," etc., JACKIE replies once with the scripted line *"I hear you.
+  Stay right here — I'm getting someone to you immediately."* and stops
+  the interview. (System auto-fires ESI-1 in parallel via Layer 1.)
+- **Per-complaint can't-miss red flags.** Abdominal → ectopic, RLQ
+  migration, blood in stool/vomit. Headache → SAH (thunderclap, "worst
+  headache of my life"), meningitis, GCA. SOB → PE (DVT screen,
+  immobilisation), pneumothorax. Trauma → LOC + anticoagulants.
+- **Edge cases handled explicitly:** off-topic, vague, frustrated,
+  silent, language barrier, contradictory affect, crying patient, soft
+  speech, multiple speakers, minors, non-verbal patients.
+
+### 3. Output filtering
+[`backend/agents/jackie_agent.py`](backend/agents/jackie_agent.py)
+post-filters the LoRA's output before it reaches ElevenLabs TTS:
+strips metacommentary wrappers ("Here's a follow-up turn:"), extracts
+the quoted question if the LoRA wraps its turn, and removes bracketed
+internal-reasoning notes. Belt-and-braces for the prompt-level rule
+that says *"every character you emit is heard by the patient."*
+
+### 4. Concordance flagging as an under-triage safety net
+The concordance engine is itself a safety mechanism — it catches
+patients who *minimise verbally* while showing acoustic distress, the
+exact pattern that under-triages atypical-CVD presentations in women
+(per the MIMIC-IV-derived dictionary). Risk-aware lowered biomarker
+thresholds activate when the transcript discloses CVD risk factors
+(DM, HTN, prior MI, smoking, family history). Conjunctive design —
+both verbal pattern AND biomarker breach are required to fire — keeps
+the false-positive rate at 0% on the 70-year-old-white-man cohort
+(see Concordance eval section below).
+
+### 5. Concordance eval harness
+[`backend/tests/concordance_eval.py`](backend/tests/concordance_eval.py)
+(see next section) gives the architecture an empirical receipt:
+sensitivity 100%, specificity 100%, FPR 0.0% on a stratified n=13
+synthetic case set. Already surfaced one real Tier-4 dictionary bug.
+
+### What this architecture does NOT yet validate
+
+Honest gap: there is no JACKIE-output-level adversarial eval. The
+prompt rules above tell the LoRA what to do, but no automated test
+asks *"in practice, does she?"* Open V2 questions a Hippocratic-AI-
+calibre eval would answer:
+
+- Does JACKIE ever diagnose? (rule: never)
+- Does JACKIE ever echo back HIV status / drug use / abuse disclosures? (rule: never)
+- Does JACKIE handle "Am I having a heart attack?" with the scripted line? (rule: yes)
+- Does JACKIE escalate on "I can't breathe" within one turn? (rule: yes)
+- Does JACKIE leak metacommentary into TTS output? (rule: never — Layer 3 is the safety net here)
+- Does JACKIE stay in scope when the patient asks the time, the bathroom, the wait? (rule: redirect, then resume)
+
+A JACKIE-output adversarial test set is on the V2 roadmap. Until then,
+Layers 1–4 are the system's safety guarantee — and Layer 1 specifically
+is *architectural*, not *behavioural*: it cannot fail because of LLM
+state.
+
+---
+
 ## Concordance engine — eval & false-positive rate
 
 The concordance flag is **conjunctive by design**: a flag fires only when
