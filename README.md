@@ -194,6 +194,98 @@ See `.gitignore`.
 
 ---
 
+## Literature anchoring
+
+V.I.C.T.O.R.'s thesis is **bias-flagging clinical decision support**, not
+diagnostic. The framing matters because the four-link chain below has
+three peer-reviewed grounded steps and one novel synthesis — and the
+honest demo line distinguishes them.
+
+### The chain
+
+**1. Atypical-presentation CVD is under-triaged, with a demographic skew.**
+*Grounded.* MIMIC-IV-ED + MIMIC-IV v3.1 BigQuery analysis (n ≈ 60,000
+CVD + non-CVD cases) shows female patients with confirmed CVD presenting
+as abdominal pain are triaged at mean acuity 2.80, vs men with chest
+pain at 2.17 — a ~0.6-level acuity gap for the same disease. See
+`uploads/VICTOR_MIMIC_Findings_For_Prompts_1.md` for the per-complaint
+table. Survivorship-biased (only patients who *received* a CVD dx are
+counted) — true gap is likely worse, not better.
+
+**2. Voice biomarkers correlate with cardiac outcomes.** *Grounded — peer
+reviewed.* The cardiac vocal biomarker literature is small but credible:
+- [Sara et al., *JACC* 2022](https://pubmed.ncbi.nlm.nih.gov/35341593/) —
+  Noninvasive voice biomarker associated with **incident** coronary
+  artery disease events at follow-up (Mayo Clinic).
+- [Maor et al., *JAHA* 2019](https://www.ahajournals.org/doi/10.1161/JAHA.119.013359) —
+  Vocal biomarker associated with hospitalisation and mortality in heart
+  failure patients.
+- [Voice in HF — *Circulation: Heart Failure* 2024](https://www.ahajournals.org/doi/10.1161/CIRCHEARTFAILURE.124.012303) —
+  Systematic review of voice assessment + vocal biomarkers in HF.
+- [AHF-Voice study, *Frontiers Digital Health* 2025](https://www.frontiersin.org/journals/digital-health/articles/10.3389/fdgth.2025.1548600/full) —
+  131-patient prospective cohort, 31% women, NYHA III–IV, looking at
+  voice-based early detection of decompensation.
+- [ADHF acoustic markers, *Applied Sciences* 2023](https://www.mdpi.com/2076-3417/13/3/1827) —
+  Phonation stability, speech rate, and phrase length tracked treatment
+  status in acute decompensated HF.
+- [Speech & pause alterations in HF, *JAHA* 2022](https://www.ahajournals.org/doi/10.1161/JAHA.122.027023) —
+  Acoustic speech analysis of decompensated vs. compensated HF patients.
+
+**3. Verbal minimisation correlates with delayed cardiac care-seeking.**
+*Grounded.* Symptom-attribution / illness-perception literature (Quinn
+2005, McKinley et al., Lefler & Bondy) consistently shows that patients
+who minimise (attribute symptoms to "just stress", "indigestion",
+"don't want to bother anyone") delay presentation by hours to days,
+with the longest delays in women, older adults, and patients with prior
+benign-attribution episodes. The Tier-4 phrase dictionary in
+`backend/engine/concordance.py` is sourced from this literature.
+
+**4. The CONJUNCTION — verbal minimisation co-occurring with elevated
+acoustic distress — is a high-specificity under-triage signal.**
+**This is V.I.C.T.O.R.'s novel synthesis.** Not yet validated in any
+peer-reviewed study. Defensible as a synthesis of (1)+(2)+(3), not as a
+diagnostic claim. Empirical specificity on a stratified synthetic eval is
+100% (see next section); prospective validation against MIMIC-IV-ED
+triage notes with confirmed clinical outcomes is V2.
+
+### The honest demo line
+
+> *V.I.C.T.O.R. is bias-flagging clinical decision support. The underlying
+> signals — voice biomarkers correlating with cardiac outcomes, and
+> minimisation language correlating with delayed care-seeking — are
+> peer-reviewed. Our novel contribution is operationalising their
+> conjunction in a real-time triage workflow. We are not making a
+> diagnostic claim; we are surfacing a verbal-acoustic mismatch for
+> clinician review. The clinician retains independent review of the
+> basis, consistent with FDA CDS Software guidance.*
+
+### V2 fine-tuning path — Bridge2AI-Voice
+
+The current LoRA at
+[`jantam13/victor-triage-lora-llama3.1-8b`](https://huggingface.co/jantam13/victor-triage-lora-llama3.1-8b)
+is fine-tuned on MIMIC-IV-ED triage text (clinician-reasoning register).
+The voice-acoustic side is currently sourced from thymia's Helios API.
+For V2, the affect-acoustic model could be fine-tuned directly on:
+
+- **[Bridge2AI-Voice on PhysioNet](https://physionet.org/content/b2ai-voice/3.1.0/)** —
+  833 participants, 29,278 recordings across five North American sites.
+  Five disease cohorts: voice disorders, neurological (Parkinson's,
+  ALS, stroke), **mood disorders (depression, anxiety)**, respiratory,
+  controls. The mood + control cohorts are the relevant slice for
+  V.I.C.T.O.R.'s lowSelfEsteem / suppressed-distress axis.
+- Access: PhysioNet credentialed-user status + signed Bridge2AI Voice
+  Registered Access License DUA. v3.1.0 ships derived parquet features;
+  raw audio access requires additional credentialing.
+- Caveat: no cardiac cohort in Bridge2AI-Voice — use it for the
+  *acoustic-affect* side of the concordance equation, not the *cardiac
+  outcome* side. The cardiac voice biomarker literature above is the
+  correct anchoring for the cardiac claim.
+
+See [Bridge2AI feasibility study, Frontiers 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12037532/)
+for the broader vision V.I.C.T.O.R. positions as a downstream application of.
+
+---
+
 ## Concordance engine — eval & false-positive rate
 
 The concordance flag is **conjunctive by design**: a flag fires only when
