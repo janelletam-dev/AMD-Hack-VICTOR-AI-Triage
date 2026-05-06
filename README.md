@@ -240,6 +240,41 @@ with the longest delays in women, older adults, and patients with prior
 benign-attribution episodes. The Tier-4 phrase dictionary in
 `backend/engine/concordance.py` is sourced from this literature.
 
+### Foundational clinical reasoning + ED workflow grounding
+
+Three citations that name what V.I.C.T.O.R. is operationally doing,
+beyond the cardiac-specific literature above:
+
+- **[Croskerry P. *A universal model of diagnostic reasoning.* Acad Med. 2009;84(8):1022–8](https://pubmed.ncbi.nlm.nih.gov/19638766/)** —
+  Dual-process model: System 1 (fast, pattern-matching, intuitive)
+  vs System 2 (slow, analytic, deliberate). Type 1 errors (System 1
+  pattern-mismatches: "abd pain in a 55yo woman → GI" when the
+  ground truth is atypical CVD) are precisely what V.I.C.T.O.R.'s
+  concordance engine is designed to backstop. The conjunctive
+  architecture — verbal minimisation × acoustic biomarker breach —
+  flags exactly the cases where System 1 is most likely to misroute.
+  **V.I.C.T.O.R. is operationally a Type 1 diagnostic-error backstop.**
+- **[Hill RG Jr, Sears LM, Melanson SW. *4000 clicks: a productivity analysis of EMR in a community hospital ED.* Am J Emerg Med. 2013;31(11):1591–4](https://pubmed.ncbi.nlm.nih.gov/24060331/)** —
+  Canonical EMR-friction study: 4,000 mouse clicks per 10-hour ED
+  shift. Voice-first triage is the productivity argument: V.I.C.T.O.R.
+  captures the patient interview as structured chart data, removing
+  the click burden from the clinician.
+- **[Kanzaria HK, Brook RH, Probst MA, et al. *Emergency physician perceptions of shared decision-making.* Acad Emerg Med. 2015;22(4):399–405](https://pubmed.ncbi.nlm.nih.gov/25807868/)** —
+  Documents how ED physicians actually want CDS to behave: as
+  decision *support*, not replacement; surfacing relevant evidence
+  the clinician can independently review. V.I.C.T.O.R.'s framing
+  (M.E.R.C.E.D.'s gloss as evidence-not-prescription, the override
+  banner that annotates rather than instructs) is sourced from this.
+
+V.I.C.T.O.R. positions as cousin work to the active 2025 clinical-LLM
+reasoning evaluation research wave — DeepSeek-R1's RL-for-reasoning
+[arXiv:2501.12948](https://arxiv.org/abs/2501.12948), o1 evaluation
+[arXiv:2409.18486](https://arxiv.org/abs/2409.18486), pediatric
+reasoning model evaluation
+[medRxiv 2025.02.27](https://doi.org/10.1101/2025.02.27.25323028) —
+applied specifically to ED triage workflow rather than diagnostic
+reasoning in isolation.
+
 **4. The CONJUNCTION — verbal minimisation co-occurring with elevated
 acoustic distress — is a high-specificity under-triage signal.**
 **This is V.I.C.T.O.R.'s novel synthesis.** Not yet validated in any
@@ -310,9 +345,16 @@ unlocks:
 
 Access is gated: PhysioNet credentialed status + CITI training + signed
 DUA + author approval. License is "PhysioNet Contributor Review Health
-Data License 1.5.0." Time cost is days to weeks for credentialing —
+Data License 1.5.0." Realistic timeline ≈ 14 days for credentialing —
 which is exactly why this is named here as the V2 path, not promised
 as a hackathon deliverable.
+
+The methodology is accessible NOW, ahead of data approval. The
+[**AlaaLab/ER-Reason**](https://github.com/AlaaLab/ER-Reason/) GitHub
+repository is public and contains the benchmark's evaluation framework,
+prompt structures, and reasoning-task definitions. V2 work can adopt
+that scaffolding without waiting for the gated data — apply for data
+access in parallel.
 
 ---
 
