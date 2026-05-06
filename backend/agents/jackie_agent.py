@@ -99,6 +99,15 @@ class JackieAgent:
                 ],
                 temperature=0.4,
                 max_tokens=120,
+                # JACKIE specifically uses the BASE model, not the LoRA fine-tune.
+                # The fine-tune was trained on data with therapy-coded language
+                # and consistently leaks phrasings like "I know you're trying to
+                # help, but..." or "What's been on your mind" despite the system
+                # prompt forbidding them. Base llama3.1:8b follows the prompt's
+                # ED-triage register more cleanly. The LoRA stays active for
+                # M.E.R.C.E.D. and the other agents where clinical register is
+                # appropriate.
+                model="llama3.1:8b",
             )
             text = text.strip().strip('"').strip()
             # Strip parenthetical "internal monologue" asides — the fine-tuned
@@ -106,6 +115,21 @@ class JackieAgent:
             # on the nausea.)" which ElevenLabs would read aloud verbatim. The
             # patient should hear only the actual question.
             text = re.sub(r"\s*\([^)]*\)\s*", " ", text).strip()
+            # Defensive post-filter: strip the most common therapy-coded
+            # opener that the fine-tune still emits even on the base model
+            # if the system prompt doesn't quite override it. Catches
+            # "I know you're trying to help, but…" and similar
+            # patronising redirects.
+            text = re.sub(
+                r"^(I (know|hear|understand)( that)?( you('?re| are))?[^.?!]*[,.]\s*)+",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip()
+            # If the entire response was just the patronising opener, fall
+            # back to the canned acknowledgement + question.
+            if not text or len(text) < 10:
+                raise ValueError("post-filter stripped response to nothing")
             if not text:
                 raise ValueError("empty LLM response")
             return text
