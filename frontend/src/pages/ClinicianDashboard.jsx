@@ -368,6 +368,14 @@ export default function ClinicianDashboard() {
 
             <BiomarkerCard data={biomarkers} unavailable={biomarkerUnavailable} />
 
+            {/* Concordance Report — TrueVoice-style gap layout. Renders
+                each fired flag as a quote bubble with the matched
+                minimisation phrase highlighted, the breaching biomarker
+                evidence next to it, and M.E.R.C.E.D.'s clinical gloss
+                below. Concordance score is a 0-100 rollup: 0 = aligned,
+                100 = many high-tier gaps. Hidden when no flags. */}
+            <ConcordanceReport flags={flagQueue} biomarkers={biomarkers} />
+
             {/* The standalone "Live Patient Transcript" card used to live
                 here. It's been moved INSIDE IdentityCard's verbatim
                 accordion ("→ view patient's own words"), per Epic 2018+
@@ -492,6 +500,301 @@ const HELIOS_DISPLAY = [
     concerningWhen: "low",
   },
 ];
+
+// Concordance Report — inspired by the TrueVoice gap-display pattern,
+// adapted to V.I.C.T.O.R.'s flag shape. Each flag becomes a "gap card"
+// with: the patient utterance quote, the matched minimisation phrase,
+// the breaching biomarker evidence at that moment (Helios/Apollo/
+// Psyche values), and M.E.R.C.E.D.'s clinical gloss. Rolls up to a
+// 0-100 concordance score (0 = aligned, higher = more gaps weighted
+// by tier). When no flags are present we render an "ALIGNED" banner
+// so the clinician can see "the engine is running and not flagging
+// anything" instead of an empty space they have to interpret.
+function ConcordanceReport({ flags, biomarkers }) {
+  const list = Array.isArray(flags) ? flags : [];
+  // Score: each flag contributes (1 / tier) * 30 + 5 per breaching
+  // axis it cites, capped at 100. Tier 1 (most concerning) weighs
+  // most. This is a UX rollup, not a clinical scale — labelled as
+  // "concordance score" so it's not mistaken for an ESI level.
+  const score = (() => {
+    if (!list.length) return 0;
+    let s = 0;
+    for (const f of list) {
+      const tier = Math.max(1, Math.min(4, f.tier || 3));
+      s += 30 / tier;
+      const evidence = Array.isArray(f.biomarker_evidence) ? f.biomarker_evidence : [];
+      s += Math.min(20, evidence.length * 5);
+    }
+    return Math.min(100, Math.round(s));
+  })();
+  const tone = list.length === 0
+    ? "ok"
+    : score >= 60
+    ? "danger"
+    : score >= 30
+    ? "warning"
+    : "warning";
+  const fg = tone === "danger"
+    ? "var(--vic-error)"
+    : tone === "warning"
+    ? "#ffb46f"
+    : "rgb(120, 200, 160)";
+  const border = tone === "danger"
+    ? "rgba(255, 100, 100, 0.30)"
+    : tone === "warning"
+    ? "rgba(255, 180, 111, 0.30)"
+    : "rgba(120, 200, 160, 0.30)";
+  return (
+    <section className="vic-glass" style={{
+      padding: 20, borderRadius: 16,
+      border: `1px solid ${border}`,
+      display: "flex", flexDirection: "column", gap: 14,
+    }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        alignItems: "center", flexWrap: "wrap", gap: 12,
+      }}>
+        <div>
+          <div style={{
+            fontSize: 10, fontWeight: 700,
+            color: "rgba(47, 217, 244, 0.8)",
+            textTransform: "uppercase", letterSpacing: "0.2em",
+          }}>
+            Concordance Report · M.E.R.C.E.D.
+          </div>
+          <div style={{
+            fontSize: 9, fontWeight: 500, marginTop: 2,
+            color: "var(--vic-on-surface-variant)", opacity: 0.6,
+            fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
+          }}>
+            verbal–acoustic mismatch detection · last 60s window
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{
+            fontSize: 26, fontWeight: 700, color: fg,
+            fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+            lineHeight: 1.1,
+          }}>
+            {list.length === 0 ? "ALIGNED" : `${list.length} gap${list.length > 1 ? "s" : ""}`}
+          </div>
+          {list.length > 0 && (
+            <div style={{
+              fontSize: 11, color: fg, opacity: 0.85,
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: "0.06em",
+            }}>
+              score {score}/100
+            </div>
+          )}
+        </div>
+      </div>
+      {list.length === 0 ? (
+        <div style={{
+          fontSize: 13, color: "var(--vic-on-surface-variant)",
+          padding: "8px 12px", borderRadius: 8,
+          background: "rgba(120, 200, 160, 0.06)",
+          border: "1px solid rgba(120, 200, 160, 0.18)",
+        }}>
+          Verbal channel and voice biomarkers are aligned. A flag fires when
+          a minimisation phrase ("I'm fine", "probably nothing") meets
+          breaching biomarkers in the preceding 60s.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {list.map((f, i) => (
+            <ConcordanceGapCard
+              key={`${f.triage_label}-${i}`}
+              flag={f}
+              index={list.length - i}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ConcordanceGapCard({ flag, index }) {
+  const utterance = flag.utterance_text || "";
+  // Highlight the matched phrase inside the utterance (case-insensitive).
+  // Falls back to plain text if the phrase isn't present (LLM may have
+  // paraphrased between gloss + the original transcript).
+  const matched = flag.trigger_phrase || (Array.isArray(flag.matches) ? flag.matches[0] : "") || "";
+  const evidence = Array.isArray(flag.biomarker_evidence) ? flag.biomarker_evidence : [];
+  const gloss = flag.gloss || flag.gloss_seed || "";
+  const tier = flag.tier;
+  const fg = tier === 1
+    ? "var(--vic-error)"
+    : tier === 2
+    ? "#ffb46f"
+    : "rgba(47, 217, 244, 0.8)";
+  return (
+    <div style={{
+      padding: "12px 14px", borderRadius: 12,
+      border: `1px solid ${fg === "var(--vic-error)" ? "rgba(255, 100, 100, 0.25)" : fg === "#ffb46f" ? "rgba(255, 180, 111, 0.25)" : "rgba(47, 217, 244, 0.18)"}`,
+      borderLeftWidth: 4, borderLeftColor: fg,
+      background: "rgba(12, 19, 36, 0.4)",
+      display: "flex", flexDirection: "column", gap: 10,
+    }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        alignItems: "baseline", gap: 8, flexWrap: "wrap",
+      }}>
+        <span style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 10, fontWeight: 700, color: fg,
+          textTransform: "uppercase", letterSpacing: "0.2em",
+        }}>
+          {tier === 1 ? "Critical gap" : tier === 2 ? "Concordance gap" : "Verbal-acoustic mismatch"} · #{index}
+        </span>
+        <span style={{
+          fontSize: 10, color: "var(--vic-on-surface-variant)",
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: "0.06em", opacity: 0.7,
+        }}>
+          {flag.triage_label}
+        </span>
+      </div>
+
+      {/* Patient quote — italic with quote mark, matched phrase
+          highlighted in the tier color. Renders even if utterance is
+          short; falls back to just the matched phrase if no fuller
+          context was published. */}
+      <div style={{
+        position: "relative", paddingLeft: 22,
+        fontSize: 14, fontStyle: "italic", lineHeight: 1.5,
+        color: "var(--vic-on-surface)",
+      }}>
+        <span style={{
+          position: "absolute", left: 0, top: -4,
+          fontSize: 22, color: fg, opacity: 0.5,
+          fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+        }}>“</span>
+        <HighlightedQuote text={utterance || matched} highlight={matched} fg={fg} />
+      </div>
+
+      {matched && (
+        <div style={{
+          fontSize: 10, fontFamily: "'JetBrains Mono', monospace",
+          color: "var(--vic-on-surface-variant)",
+          letterSpacing: "0.08em",
+        }}>
+          MATCHED <span style={{
+            color: fg, padding: "1px 6px",
+            background: `${fg.startsWith("var") ? "rgba(255, 100, 100, 0.10)" : fg === "#ffb46f" ? "rgba(255, 180, 111, 0.10)" : "rgba(47, 217, 244, 0.10)"}`,
+            borderRadius: 4, fontStyle: "italic",
+          }}>"{matched}"</span>
+        </div>
+      )}
+
+      {/* Voice at this moment — biomarker evidence chips. Each chip
+          is a {model.name = value} entry showing the breaching axis
+          and its measured value. Bar visualises the value 0-1 so the
+          clinician can scan severity. */}
+      {evidence.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{
+            fontSize: 9, fontFamily: "'JetBrains Mono', monospace",
+            color: "var(--vic-on-surface-variant)",
+            letterSpacing: "0.16em", textTransform: "uppercase", opacity: 0.7,
+          }}>Voice at this moment</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {evidence.map((e, i) => (
+              <BiomarkerEvidenceChip key={i} evidence={e} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* M.E.R.C.E.D.'s clinical gloss — the LLM's read on what
+          this gap means clinically. Mirrors TrueVoice's "Clinical
+          note · Claude Haiku" line. */}
+      {gloss && (
+        <div style={{
+          fontSize: 12, lineHeight: 1.5,
+          color: "var(--vic-on-surface)",
+          padding: "8px 10px", borderRadius: 8,
+          background: "rgba(47, 217, 244, 0.04)",
+          borderLeft: "2px solid rgba(47, 217, 244, 0.4)",
+        }}>
+          <span style={{
+            fontSize: 9, fontFamily: "'JetBrains Mono', monospace",
+            color: "rgba(47, 217, 244, 0.65)", letterSpacing: "0.16em",
+            textTransform: "uppercase", marginRight: 8,
+          }}>Clinical note · M.E.R.C.E.D.</span>
+          {gloss}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HighlightedQuote({ text, highlight, fg }) {
+  if (!text) return null;
+  if (!highlight) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(highlight.toLowerCase());
+  if (idx < 0) return <>{text}</>;
+  const before = text.slice(0, idx);
+  const match = text.slice(idx, idx + highlight.length);
+  const after = text.slice(idx + highlight.length);
+  return (
+    <>
+      {before}
+      <mark style={{
+        background: fg === "var(--vic-error)"
+          ? "rgba(255, 100, 100, 0.18)"
+          : fg === "#ffb46f"
+          ? "rgba(255, 180, 111, 0.18)"
+          : "rgba(47, 217, 244, 0.15)",
+        color: fg,
+        padding: "0 4px",
+        borderRadius: 3,
+        fontStyle: "italic",
+      }}>{match}</mark>
+      {after}
+    </>
+  );
+}
+
+function BiomarkerEvidenceChip({ evidence }) {
+  const v = typeof evidence.value === "number" ? evidence.value : 0;
+  const pct = Math.round(v * 100);
+  // Bar fill colour by axis severity. helios.distress / lowSelfEsteem
+  // are the bias-detection signals, render in red when breaching.
+  const isCardiacBias = evidence.model === "helios" && (
+    evidence.name === "distress" || evidence.name === "lowSelfEsteem"
+  );
+  const bar = isCardiacBias ? "var(--vic-error)" : "#ffb46f";
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      padding: "4px 10px", borderRadius: 999,
+      background: "rgba(255, 255, 255, 0.04)",
+      border: "1px solid rgba(255, 255, 255, 0.10)",
+      fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+    }}>
+      <span style={{
+        color: "var(--vic-on-surface-variant)", letterSpacing: "0.04em",
+      }}>
+        {evidence.model}.{evidence.name}
+      </span>
+      <span style={{
+        width: 50, height: 4, borderRadius: 2,
+        background: "rgba(255, 255, 255, 0.08)",
+        overflow: "hidden", position: "relative",
+      }}>
+        <span style={{
+          position: "absolute", inset: 0,
+          width: `${pct}%`, background: bar,
+        }} />
+      </span>
+      <span style={{ color: bar, fontWeight: 700 }}>
+        {v.toFixed(2)}
+      </span>
+    </div>
+  );
+}
 
 function BiomarkerCard({ data, unavailable }) {
   const h = data?.helios || {};

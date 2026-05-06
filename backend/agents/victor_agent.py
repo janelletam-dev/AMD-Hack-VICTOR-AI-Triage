@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -132,6 +133,16 @@ class VictorAgent:
             *(self.merced.gloss(d) for d in flag_dicts),
             return_exceptions=True,
         )
+        # Build per-flag "biomarker evidence" — the specific axes that
+        # were breaching when this flag fired. Mirrors TrueVoice's
+        # `biomarker_evidence: [{name, value, ts_ms}]` shape so the
+        # dashboard's Concordance Report can show the smoking-gun
+        # numbers next to the patient quote.
+        helios = (biomarkers or {}).get("helios") or {}
+        apollo = (biomarkers or {}).get("apollo") or {}
+        psyche = (biomarkers or {}).get("psyche") or {}
+        breaching = self._extract_breaching_axes(helios, apollo, psyche)
+
         for d, gloss in zip(flag_dicts, glosses):
             if isinstance(gloss, Exception):
                 log.warning("merced gloss raised: %s", gloss)
@@ -144,6 +155,15 @@ class VictorAgent:
                     "type": "concordance_flag",
                     "data": {
                         **d,
+                        # Concordance Gap context (TrueVoice-style):
+                        # the full patient utterance + the breaching
+                        # biomarker snapshot at the moment the flag
+                        # fired. The dashboard renders these as a
+                        # "quote + matched phrase + voice at this
+                        # moment + clinical note" report.
+                        "utterance_text": (transcript or "")[-400:],
+                        "biomarker_evidence": breaching,
+                        "ts_ms": int(time.time() * 1000),
                         "gloss": gloss_text,
                         "evidence_basis": (
                             f"MIMIC-IV: mean acuity {d['acuity']:.2f} for "
@@ -233,3 +253,67 @@ class VictorAgent:
             "risk_aware": f.risk_aware,
             "repeated": f.repeated,
         }
+
+    # Per-axis thresholds for "breaching" (matches the sensitivity used
+    # by the TrueVoice concordance engine for direct comparability and
+    # reads naturally on a 0–1 gauge: anything ≥ this is flagged).
+    # Helios distress / stress / lse threshold is intentionally lower
+    # than the documented "concerning ≥ 0.66" because the demo
+    # population skews to the moderate range.
+    _BREACH_THRESHOLDS: dict[str, dict[str, float]] = {
+        "helios": {
+            "stress":          0.35,
+            "distress":        0.30,
+            "exhaustion":      0.30,
+            "lowSelfEsteem":   0.30,
+            "mentalStrain":    0.35,
+            "sleepPropensity": 0.40,
+        },
+        "apollo": {
+            # Apollo's negative-leaning axes: low valence + low energy +
+            # low engagement read as concerning. Arousal is bidirectional.
+        },
+        "psyche": {
+            # Psyche emits a distribution; we treat sad/fear/anger ≥ 0.55 as breaching.
+        },
+    }
+
+    @classmethod
+    def _extract_breaching_axes(
+        cls,
+        helios: dict[str, float],
+        apollo: dict[str, float],
+        psyche: dict,
+    ) -> list[dict[str, Any]]:
+        """Return the list of biomarker axes currently above their
+        breach threshold. Used as evidence chips in the Concordance
+        Report panel: each entry = {name, value, model}."""
+        out: list[dict[str, Any]] = []
+        for axis, thresh in cls._BREACH_THRESHOLDS["helios"].items():
+            v = helios.get(axis)
+            if isinstance(v, (int, float)) and v >= thresh:
+                out.append({"model": "helios", "name": axis, "value": round(float(v), 2)})
+        # Apollo: low valence, low energy, low engagement, OR very high arousal
+        if apollo:
+            val = apollo.get("valence")
+            if isinstance(val, (int, float)) and val <= 0.30:
+                out.append({"model": "apollo", "name": "low valence", "value": round(float(val), 2)})
+            eng = apollo.get("engagement")
+            if isinstance(eng, (int, float)) and eng <= 0.40:
+                out.append({"model": "apollo", "name": "low engagement", "value": round(float(eng), 2)})
+            energy = apollo.get("energy")
+            if isinstance(energy, (int, float)) and energy <= 0.30:
+                out.append({"model": "apollo", "name": "low energy", "value": round(float(energy), 2)})
+            arousal = apollo.get("arousal")
+            if isinstance(arousal, (int, float)) and arousal >= 0.85:
+                out.append({"model": "apollo", "name": "high arousal", "value": round(float(arousal), 2)})
+        # Psyche: dominant negative emotion at ≥ 0.55 confidence is
+        # particularly concerning when the verbal channel was positive
+        # ("I'm fine" + dominant=fear is the textbook concordance gap).
+        if psyche:
+            distribution = psyche.get("distribution") or {}
+            for emo in ("fear", "sadness", "anger"):
+                w = distribution.get(emo, 0.0)
+                if isinstance(w, (int, float)) and w >= 0.40:
+                    out.append({"model": "psyche", "name": emo, "value": round(float(w), 2)})
+        return out
