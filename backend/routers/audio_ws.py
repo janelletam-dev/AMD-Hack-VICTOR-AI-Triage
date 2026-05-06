@@ -29,10 +29,17 @@ from services.thymia_service import (
     pcm16_to_wav,
 )
 
-# Cap the per-session complaint-phase audio buffer at ~60s. At 1280 bytes/frame
-# (40ms PCM16 @16 kHz mono) that's ~1500 frames ≈ 1.9 MB — well within Helios
-# limits and keeps memory bounded if a patient lingers.
-MAX_COMPLAINT_FRAMES = 1500
+# Cap the per-session voice buffer at ~120s. At 1280 bytes/frame (40ms PCM16
+# @16 kHz mono) that's 3000 frames ≈ 3.8 MB. Bumped from 60s when we extended
+# Helios to capture both complaint AND conversation-phase audio for incremental
+# refinement of biomarker scores.
+MAX_COMPLAINT_FRAMES = 3000
+
+# Re-run Helios every N completed JACKIE turns to refine biomarker scores
+# as more speech accumulates. The first run still fires at the end of the
+# complaint phase (fast concordance flag); subsequent runs publish updated
+# `biomarker` events that supersede the previous values on the dashboard.
+HELIOS_REFRESH_EVERY_N_TURNS = 2
 
 log = logging.getLogger("victor.audio_ws")
 
@@ -106,6 +113,8 @@ async def audio_ws(
         "helios_lang": "en-US",             # default; updated from Deepgram language
         # J.A.C.K.I.E. follow-up loop state
         "jackie_turn_count": 0,             # how many J.A.C.K.I.E. turns have fired
+        "helios_submit_count": 0,           # 0 = never, 1 = initial, 2+ = refreshes
+        "last_helios_submit_frames": 0,     # buffer length at last Helios submission
         "jackie_max_turns": 6,              # OPQRST coverage typically fits in 6 turns
         "jackie_busy": False,               # debounce: don't double-fire on rapid finals
         "escalated": False,                 # flipped when V.I.C.T.O.R. emits a flag
@@ -416,6 +425,12 @@ async def audio_ws(
                     "data": {"agent": "J.A.C.K.I.E.", "status": "idle", "action": "Awaiting reply"},
                 },
             )
+            # Incremental Helios refinement — every N completed turns,
+            # re-submit the cumulative buffer for refined biomarker scores.
+            # Runs as a background task so JACKIE's loop isn't blocked on
+            # the Thymia round-trip.
+            if turn >= 1 and turn % HELIOS_REFRESH_EVERY_N_TURNS == 0:
+                asyncio.create_task(submit_helios_refresh())
             if turn >= state["jackie_max_turns"]:
                 # Send a warm closing turn, then signal completion.
                 closing = (
@@ -526,6 +541,10 @@ async def audio_ws(
 
         await bus.publish(room, {"type": "biomarker", "data": event_data})
 
+        # Track submission progress for incremental refresh.
+        state["helios_submit_count"] += 1
+        state["last_helios_submit_frames"] = len(pcm_chunks)
+
         # Run the concordance engine, then hand off to V.I.C.T.O.R. The
         # orchestrator publishes concordance_flag (with M.E.R.C.E.D. gloss),
         # esi_update, and soap_update events — and emits agent_activity for
@@ -545,6 +564,62 @@ async def audio_ws(
             biomarkers={"helios": helios_block},
             chief_complaint_label=(flags[0].triage_label if flags else None),
         )
+
+    # Re-run for biomarker refinement only — does NOT re-run concordance
+    # evaluation (would spam new flags). Triggered after every N JACKIE
+    # turns; publishes a fresh `biomarker` event that supersedes the
+    # initial scores on the dashboard. Keeps the demo "live and refining"
+    # rather than "single snapshot."
+    helios_refresh_lock = asyncio.Lock()  # prevent overlapping refreshes
+
+    async def submit_helios_refresh() -> None:
+        # Only refresh if the initial submission already happened. The
+        # initial path runs the concordance engine; refreshes only update
+        # biomarkers.
+        if state["helios_submit_count"] < 1:
+            return
+        if not thymia.enabled:
+            return
+
+        async with helios_refresh_lock:
+            pcm_chunks: list[bytes] = list(state["complaint_pcm"])
+            new_frames = len(pcm_chunks) - state["last_helios_submit_frames"]
+            # Need at least ~10s of NEW audio since the last submit to be
+            # worth re-running. Guards against rapid no-op refreshes.
+            if new_frames < 250:
+                log.info(
+                    "session=%s helios refresh skipped — only %d new frames since last submit",
+                    session_id, new_frames,
+                )
+                return
+            log.info(
+                "session=%s helios refresh: submitting %d frames (~%.1fs, +%d new) for biomarker refinement",
+                session_id, len(pcm_chunks), len(pcm_chunks) * 0.04, new_frames,
+            )
+
+            wav_bytes = pcm16_to_wav(b"".join(pcm_chunks), settings.sample_rate_hz)
+            result: HeliosResult | None = await thymia.submit_helios(
+                wav_bytes,
+                user_label=session_id,
+                date_of_birth=state["dob_iso"],
+                language=state["helios_lang"],
+            )
+            if not result:
+                log.warning("session=%s helios refresh returned no result — keeping prior values", session_id)
+                return
+
+            event_data = result.to_event()
+            helios_block = event_data.get("helios", {})
+            if concordance_engine.biomarkers_all_zero({"helios": helios_block}):
+                log.warning("session=%s helios refresh returned all-zero — keeping prior values", session_id)
+                return
+
+            # Tag as refreshed so the dashboard can display "refined" if it cares.
+            event_data["refresh"] = True
+            event_data["pass"] = state["helios_submit_count"] + 1
+            await bus.publish(room, {"type": "biomarker", "data": event_data})
+            state["helios_submit_count"] += 1
+            state["last_helios_submit_frames"] = len(pcm_chunks)
 
     try:
         while True:
@@ -583,9 +658,12 @@ async def audio_ws(
                         },
                     )
 
-                # Buffer audio while the patient is on the chief-complaint
-                # phase — that's the speech we'll send to Helios.
-                if state["phase"] == "complaint":
+                # Buffer audio while the patient is on the complaint OR
+                # conversation phase. The same PCM accumulator feeds both
+                # the initial Helios submission (at end of complaint) and
+                # the incremental refresh runs (after every N JACKIE
+                # turns). Cap at MAX_COMPLAINT_FRAMES to bound memory.
+                if state["phase"] in ("complaint", "conversation"):
                     if len(state["complaint_pcm"]) < MAX_COMPLAINT_FRAMES:
                         state["complaint_pcm"].append(data)
                 continue
@@ -706,6 +784,14 @@ async def events_ws(
             await ws.send_text(json.dumps(event))
     except WebSocketDisconnect:
         pass
+    except RuntimeError as e:
+        # FastAPI/Starlette throws RuntimeError when send is called on a
+        # WS that already received a close frame. Common during HMR
+        # remounts or rapid tab refreshes — treat as a normal disconnect.
+        if "close" in str(e).lower():
+            log.debug("clinician ws closed mid-send room=%s", room)
+        else:
+            log.exception("clinician ws error room=%s", room)
     except Exception:
         log.exception("clinician ws error room=%s", room)
     finally:
@@ -720,7 +806,10 @@ async def _relay_events(ws: WebSocket, queue: asyncio.Queue) -> None:
         while True:
             event = await queue.get()
             await ws.send_text(json.dumps(event))
-    except (asyncio.CancelledError, WebSocketDisconnect):
+    except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+        # RuntimeError fires from Starlette when sending after the WS
+        # has already received a close frame — common during HMR
+        # remounts. Treat all three as normal terminations.
         return
     except Exception:
         log.debug("relay ended", exc_info=True)
@@ -734,7 +823,7 @@ async def _heartbeat(ws: WebSocket, session_id: str) -> None:
             await ws.send_text(
                 json.dumps({"type": "heartbeat", "data": {"session_id": session_id}})
             )
-    except (asyncio.CancelledError, WebSocketDisconnect):
+    except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
         return
     except Exception:
         log.debug("heartbeat ended", exc_info=True)

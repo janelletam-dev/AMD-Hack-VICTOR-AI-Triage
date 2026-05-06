@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { Clock, MessageCircle, Gauge, Flag } from "lucide-react";
 import VoiceSelector from "../components/VoiceSelector.jsx";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import { useAudioCapture } from "../hooks/useAudioCapture.js";
@@ -10,7 +11,25 @@ const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:800
 // `conversation` is J.A.C.K.I.E.'s adaptive follow-up loop. It's not a
 // fixed step like the prior three — the agent drives one question at a time
 // from the backend via `jackie_turn` events until `triage_complete` fires.
-const PHASES = ["name", "dob", "complaint", "conversation"];
+// Name capture is split into first_name + last_name because STT accuracy
+// on a single common word is ~95% vs ~60-70% on a full name (especially
+// non-Anglo surnames). The two captured pieces are joined back into a
+// single `name` field for downstream consumers (identityStore,
+// sessionLog, EvidenceReport — those don't change shape).
+const PHASES = ["first_name", "last_name", "dob", "complaint", "conversation"];
+
+// Barge-in lets the patient interrupt TTS by speaking; we pause the audio.
+// Risk: on a laptop without headphones, the mic can pick up TTS from the
+// speakers, Deepgram transcribes it, and we false-trigger a barge-in (cuts
+// off the assistant mid-sentence). Set to false for demo day if testing
+// shows this happens. URL override: ?barge=0 disables, ?barge=1 forces on.
+const BARGE_IN_ENABLED = (() => {
+  if (typeof window === "undefined") return true;
+  const v = new URLSearchParams(window.location.search).get("barge");
+  if (v === "0") return false;
+  if (v === "1") return true;
+  return true;  // default on
+})();
 
 // Show the bottom dev strip only when ?debug=1 is on the URL — keeps the
 // kiosk UI clean and prevents overlap with the floating route toggle.
@@ -19,27 +38,27 @@ function showDebug() {
   return new URLSearchParams(window.location.search).get("debug") === "1";
 }
 
+// Triage-nurse register: brisk, competent, warm but never therapeutic.
+// We convey calm with the voice + cadence, not by padding the prose with
+// "take your time" / "no rush" — that reads as mismatched in an ER.
 function phaseTTS(voice, phase) {
   const name = voice === "jackie" ? "Jackie" : "Victor";
   switch (phase) {
-    case "name":
-      return (
-        `Hi, I'm ${name}, and I'm here to help you get checked in. ` +
-        `Take your time — there's no rush. ` +
-        `Whenever you're ready, could you tell me your full name?`
-      );
+    case "first_name":
+      // First impression: identify the assistant and ask the first
+      // question. No "check in" / "intake" — that's hospitality framing.
+      return `Hi, I'm ${name}. What's your first name?`;
+    case "last_name":
+      // No greeting — they've already met the assistant.
+      return `And your last name?`;
     case "dob":
-      return (
-        `Thank you for that. ` +
-        `And could you share your date of birth with me?`
-      );
+      return `Got it. And your date of birth?`;
     case "complaint":
-      return (
-        `Thank you, that's everything I needed for check-in. ` +
-        `Now, whenever you're ready, could you tell me more about ` +
-        `what's been going on — what's bringing you in today, ` +
-        `and any concerns on your mind? I'm here to listen.`
-      );
+      // Open-ended phrasing invites a multi-sentence narrative, not a
+      // one-liner. Helios voice biomarkers need ~15s of audio to be
+      // reliable, so the prompt has to elicit it without feeling like an
+      // interrogation.
+      return `Tell me what's been going on — what brought you in today, when it started, and anything you've noticed.`;
     case "conversation":
       // J.A.C.K.I.E. drives this phase — TTS comes from `jackie_turn`
       // events, not a fixed prompt.
@@ -51,41 +70,45 @@ function phaseTTS(voice, phase) {
 
 function phasePrompt(phase) {
   switch (phase) {
-    case "name":
-      return { label: "Step 1 of 4", title: "Please share your full name." };
+    case "first_name":
+      return { label: "Step 1 of 5", title: "What's your first name?" };
+    case "last_name":
+      return { label: "Step 2 of 5", title: "And your last name?" };
     case "dob":
-      return { label: "Step 2 of 4", title: "And your date of birth?" };
+      return { label: "Step 3 of 5", title: "And your date of birth?" };
     case "complaint":
       return {
-        label: "Step 3 of 4",
+        label: "Step 4 of 5",
         title: "Tell me more about your concerns.",
       };
     case "conversation":
       // The actual title is replaced at render time with J.A.C.K.I.E.'s
       // current question (see Interview component).
-      return { label: "Step 4 of 4", title: "Just a few more questions." };
+      return { label: "Step 5 of 5", title: "Just a few more questions." };
     default:
       return { label: "", title: "" };
   }
 }
 
 function confirmTTS(voice, phase, value) {
-  if (phase === "name") return `I have you down as ${value} — did I get that right?`;
-  if (phase === "dob") return `Thank you. I have your date of birth as ${value} — is that correct?`;
+  if (phase === "first_name") return `${value} — that right?`;
+  if (phase === "last_name") return `${value} — that right?`;
+  if (phase === "dob") return `${value} — is that right?`;
   return "";
 }
 
-// Short retry prompts — used when the patient is being asked the same question
-// again (parse failed, or they tapped "No, try again" on the confirm card).
-// We don't repeat the full intro — they've already heard it.
+// Short retry prompts — when the parse failed or the patient said "no" on
+// the confirm card. Crisp; the patient already heard the long intro.
 function phaseRetryTTS(voice, phase) {
   switch (phase) {
-    case "name":
-      return "Could you tell me your full name?";
+    case "first_name":
+      return "Sorry — what's your first name?";
+    case "last_name":
+      return "Sorry — and your last name?";
     case "dob":
-      return "Could you share your date of birth?";
+      return "Sorry — your date of birth?";
     case "complaint":
-      return "Could you tell me a bit more about what's going on?";
+      return "Tell me what's going on.";
     default:
       return "";
   }
@@ -98,12 +121,27 @@ function phaseRetryTTS(voice, phase) {
 // ANNOUNCE: name-introduction phrases ("my name is", "i'm", "this is", …).
 // STOP_WORDS: end-of-name signals — once we hit one we stop collecting tokens
 // (handles "Janelle Tamayo and I have chest pain" → "Janelle Tamayo").
-const NAME_FILLER = /^(hi|hello|hey|yes|yeah|yep|nope|ok|okay|sure|well|uh|um|so|hi there|hello there|good morning|good afternoon|good evening)\b[\s,]*/i;
+const NAME_FILLER = /^(hi|hello|hey|yes|yeah|yep|no|nope|nah|ok|okay|sure|well|uh|um|so|hi there|hello there|good morning|good afternoon|good evening)\b[\s,]*/i;
 const NAME_ANNOUNCE = /^(my full name is|my name is|my name's|i'?m|i am|this is|it'?s|name is|name's|they call me|the name'?s|call me)\b[\s,]*/i;
 const NAME_STOP_WORDS = new Set([
   "and", "but", "for", "with", "i", "im", "ill", "ive",
   "have", "got", "feeling", "feel", "experiencing", "here",
   "from", "to", "of", "the", "a",
+]);
+// Tokens that look name-shaped (2+ alphabetic chars) but aren't names —
+// pronouns, connectors, common verbs. If the captured tokens are ALL
+// from this set, the patient probably wasn't introducing themselves
+// (e.g. they said "no it is..." trying to reject a prior misheard name).
+// Reject the parse so the retry prompt fires instead of silently
+// confirming "No It Is" as a name.
+const NON_NAME_TOKENS = new Set([
+  "no", "yes", "nope", "yeah",
+  "it", "is", "isnt", "its",
+  "this", "that", "those", "these",
+  "you", "we", "they", "us", "them", "him", "her", "me",
+  "what", "when", "where", "why", "how",
+  "be", "do", "are", "am", "was", "were",
+  "thanks", "thank",
 ]);
 
 function parseName(raw) {
@@ -142,6 +180,13 @@ function parseName(raw) {
   // Accept single-word nicknames — patients may give a nickname instead of
   // their legal name, and that’s fine for triage purposes.
   if (deduped.length < 1) {
+    return { ok: false, message: "I didn’t catch a name." };
+  }
+  // Reject "names" that are entirely common English words (pronouns,
+  // connectors, rejection words). E.g. patient says "no it is" trying
+  // to correct a prior misheard name — without this check, parseName
+  // would happily return value: "No It Is" and ask them to confirm it.
+  if (deduped.every((t) => NON_NAME_TOKENS.has(t.toLowerCase().replace(/'/g, "")))) {
     return { ok: false, message: "I didn’t catch a name." };
   }
   const titled = deduped.map(
@@ -331,6 +376,31 @@ function parseDOB(raw) {
   return { ok: false, message: "I didn't get a valid date — please say it like January 15, 1980." };
 }
 
+// Spell-out fallback: parse a transcript made of single letters
+// ("J. A. N. E.") into a contiguous string ("JANE"). Tokens longer than
+// one alphabetic character are dropped — patients sometimes throw in
+// filler ("Uh, J. A.") or phonetic-alphabet hints ("J as in juliet")
+// which we can't reliably parse, so single-letter tokens win.
+function extractSpelledLetters(transcript) {
+  if (!transcript) return "";
+  return transcript
+    .split(/[\s,.\-]+/)
+    .map((tok) => tok.trim().replace(/\.$/, ""))
+    .filter((tok) => /^[A-Za-z]$/.test(tok))
+    .join("")
+    .toUpperCase();
+}
+
+function titleCase(s) {
+  if (!s) return "";
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+// Voice yes/no detection during the confirmation step. Loose patterns
+// because Deepgram + the patient's accent + ER stress all degrade STT.
+const YES_PATTERN = /\b(yes|yeah|yep|yup|correct|right|that'?s right|sounds right|confirm)\b/i;
+const NO_PATTERN = /\b(no|nope|nah|wrong|not right|incorrect|that'?s wrong)\b/i;
+
 function isMinorFromDOB(dobValue) {
   if (!dobValue || dobValue === "Not provided") return false;
   const ageMatch = dobValue.match(/age\s+(\d+)/);
@@ -366,7 +436,34 @@ export default function PatientView() {
   // Noisy environment: track consecutive low-confidence events.
   const [noisyEnvironment, setNoisyEnvironment] = useState(false);
   const lowConfCountRef = useRef(0);
+  // Processing indicator: "thinking" (LLM composing JACKIE turn) or
+  // "got_it" (200ms flash after speech committed) or null.
+  const [processingState, setProcessingState] = useState(null);
+  // Spell-out fallback for misheard names. When true, transcript
+  // accumulation parses single-letter tokens instead of words.
+  const [spellingMode, setSpellingMode] = useState(false);
+  // Silence-based auto-commit timer. Identity phases call handleStopMic
+  // automatically when partials stop arriving for ~1200ms (or 2500ms
+  // for the open-ended complaint phase).
+  const silenceTimerRef = useRef(null);
+  // "Still listening…" visual indicator for the complaint phase.
+  // Set true when a partial hasn't arrived for ~1500ms, so the patient
+  // gets a soft "I'm still here, take your time" cue BEFORE the silence
+  // timer commits at 2500ms. Cleared on every new partial.
+  const [stillListening, setStillListening] = useState(false);
+  const lastTranscriptUpdateAtRef = useRef(0);
+  const stillListeningTimerRef = useRef(null);
+  // Track how many times the patient has retried the last_name phase.
+  // After 2 failures we skip and let the clinician fill it in via the
+  // editable identity card. Avoids derailing the demo on a hard surname.
+  const lastNameAttemptsRef = useRef(0);
   const phase = PHASES[phaseIdx];
+
+  // Patient-facing persona name. Resolved from the voice they picked at
+  // intake; used in every user-facing label so the dotted-name swarm
+  // (V.I.C.T.O.R., M.E.R.C.E.D., S.C.R.I.B.E., …) never leaks to the
+  // patient. Clinician dashboard sees the real agent names.
+  const personaName = voice === "jackie" ? "Jackie" : "Victor";
 
   const wsUrl = useMemo(
     () => (step === "interview" ? `${WS_BASE}/ws/audio?room=${room}&voice=${voice}` : null),
@@ -382,24 +479,47 @@ export default function PatientView() {
   const lastFinalRef = useRef("");
   // Refs that onEvent needs to call but are defined later in the component.
   // Late-bound (set in the effect below) so the WS callback always sees
-  // the current playTTS / mic-start / mic-stop.
+  // the current playTTS / mic-start / mic-stop / commit / confirm handlers.
+  // The pattern exists because onEvent is memoized with [] deps to avoid
+  // re-subscribing the WS on every state change; refs let it see fresh
+  // closures without breaking that.
   const playTTSRef = useRef(null);
   const micStartRef = useRef(null);
   const micStopRef = useRef(null);
+  const handleStopMicRef = useRef(null);
+  const onConfirmYesRef = useRef(null);
+  const onConfirmRetryRef = useRef(null);
+  const confirmRef = useRef(null);
+  const spellingModeRef = useRef(false);
+  const audioRef = useRef(null);
+  const ttsStateRef = useRef("idle");
 
   const onEvent = useCallback((evt) => {
-    // Track low-confidence events for noisy environment detection.
+    // ───────────── noise detection ─────────────
     if (evt.type === "jackie_turn" && evt.data?.low_confidence) {
       lowConfCountRef.current += 1;
       if (lowConfCountRef.current >= 2) setNoisyEnvironment(true);
     } else if (evt.type === "transcript" && evt.data?.is_final) {
-      // Good transcript → reset the noisy counter.
       lowConfCountRef.current = 0;
       setNoisyEnvironment(false);
     }
 
-    // J.A.C.K.I.E. follow-up turn → play TTS, then auto-restart the mic
-    // when TTS finishes so the patient can answer hands-free.
+    // ───────────── agent activity → "Persona is thinking…" ─────────────
+    // Backend emits agent_activity for J.A.C.K.I.E. when the LLM is
+    // composing the next follow-up. We surface this to the patient
+    // under their chosen persona name (Victor / Jackie), never the
+    // dotted-name swarm.
+    if (evt.type === "agent_activity") {
+      const a = evt.data || {};
+      if (a.agent === "J.A.C.K.I.E." && a.status === "active") {
+        setProcessingState("thinking");
+      }
+      // Other agents (M.E.R.C.E.D., S.C.R.I.B.E., V.I.C.T.O.R., E.L.M.E.R.)
+      // are intentionally invisible to the patient — clinician sees them.
+      return;
+    }
+
+    // ───────────── J.A.C.K.I.E. follow-up turn → play TTS ─────────────
     if (evt.type === "jackie_turn" && evt.data?.text) {
       const data = evt.data;
       setJackieTurn({
@@ -408,75 +528,155 @@ export default function PatientView() {
         max_turns: data.max_turns,
         closing: !!data.closing,
       });
+      // TTS is starting — clear "thinking" state.
+      setProcessingState("speaking");
       // Reset the running transcript so the patient's reply starts fresh.
       phaseTextRef.current = "";
       lastFinalRef.current = "";
       setInterimText("");
       const fn = playTTSRef.current;
       if (fn) fn(data.text, () => {
-        // After TTS finishes, give a tiny gap then re-engage the mic.
-        if (data.closing) return; // closing turn → triage_complete will move us to done
+        setProcessingState(null);
+        if (data.closing) return; // triage_complete will move us to done
+        // 150ms handoff beat before flipping to "Listening" — avoids
+        // jarring instant cutover from speaking → listening.
         const startFn = micStartRef.current;
         if (startFn) setTimeout(() => startFn(), 250);
       });
       return;
     }
+
     if (evt.type === "triage_complete") {
       setTriageComplete(true);
       return;
     }
+
     if (evt.type === "triage_emergency" && evt.data) {
       setEmergency({
         label: evt.data.label,
         severity: evt.data.severity || "ESI-1",
         matched_phrase: evt.data.matched_phrase,
       });
-      // Stop the mic immediately; closing TTS will play, then we exit.
       const stopFn = micStopRef.current;
       if (stopFn) stopFn();
       return;
     }
+
+    // ───────────── transcript handling ─────────────
     if (evt.type !== "transcript" || !evt.data?.text) return;
     const text = evt.data.text.trim();
     if (!text) return;
+
+    // Barge-in: if the patient starts speaking while TTS is playing,
+    // pause the audio so we don't talk over them. Threshold of 2 chars
+    // avoids cancelling on stray noise blips.
+    if (BARGE_IN_ENABLED && ttsStateRef.current === "speaking" && audioRef.current && text.length >= 2) {
+      try { audioRef.current.pause(); } catch {}
+      audioRef.current = null;
+      setTtsState("done");
+    }
+
     setInterimText(text);
     if (!evt.data.is_final) return;
 
+    // ───────────── voice yes/no during confirmation ─────────────
+    // The confirm card shows Yes/No buttons but voice should also work
+    // — the patient's been talking the whole intake.
+    if (confirmRef.current) {
+      if (YES_PATTERN.test(text)) {
+        const yesFn = onConfirmYesRef.current;
+        if (yesFn) yesFn();
+        return;
+      }
+      if (NO_PATTERN.test(text)) {
+        const noFn = onConfirmRetryRef.current;
+        if (noFn) noFn();
+        return;
+      }
+      // Neither yes nor no — fall through and let it accumulate, but
+      // don't auto-commit (the timer below is gated on !confirmRef.current).
+    }
+
     const p = phaseRef.current;
-    // Skip if Deepgram re-emits the same final segment (or a prefix of one
-    // we already have). This is the source of "Janelle Tamayo Janelle Tamayo".
+    // Skip if Deepgram re-emits the same final segment.
     if (text === lastFinalRef.current) return;
     if (phaseTextRef.current && phaseTextRef.current.endsWith(text)) return;
 
-    // Unified accumulation rule for all phases:
-    //   - empty so far → take it
-    //   - new text already contained in what we have → skip (duplicate)
-    //   - new text is a superset of what we have → replace (Deepgram refined)
-    //   - otherwise → it's a different segment of the same answer; append.
-    // Handles "January 15th" + "1990" (DOB) and dedupes "Janelle Tamayo" echoes.
-    const prevLower = phaseTextRef.current.toLowerCase();
-    const newLower = text.toLowerCase();
-    if (!phaseTextRef.current) {
-      phaseTextRef.current = text;
-    } else if (prevLower.includes(newLower)) {
-      // duplicate / subset — keep prev
-    } else if (newLower.includes(prevLower)) {
-      phaseTextRef.current = text;
+    // ───────────── transcript accumulation ─────────────
+    if (spellingModeRef.current && (p === "first_name" || p === "last_name")) {
+      // In spelling fallback: parse single-letter tokens, join into a
+      // contiguous string. The TranscriptCard renders this with mono
+      // letter-spacing so the patient sees the name being assembled.
+      // (Bug fix: previously gated on p === "name" which stopped
+      // matching after we split into first_name + last_name — the raw
+      // spelled "T A M A Y O" then bypassed the parser, got titleCased
+      // to "T a m a y o", and ElevenLabs read it back letter-by-letter.)
+      const accumulatedRaw = (phaseTextRef.current ? phaseTextRef.current + " " : "") + text;
+      const letters = extractSpelledLetters(accumulatedRaw);
+      phaseTextRef.current = letters; // already uppercase
     } else {
-      phaseTextRef.current = (phaseTextRef.current + " " + text).trim();
+      const prevLower = phaseTextRef.current.toLowerCase();
+      const newLower = text.toLowerCase();
+      if (!phaseTextRef.current) {
+        phaseTextRef.current = text;
+      } else if (prevLower.includes(newLower)) {
+        // duplicate / subset — keep prev
+      } else if (newLower.includes(prevLower)) {
+        phaseTextRef.current = text;
+      } else {
+        phaseTextRef.current = (phaseTextRef.current + " " + text).trim();
+      }
     }
     lastFinalRef.current = text;
+    // Clear interim — it represented the in-flight version of THIS final;
+    // now that the final is captured, the next utterance will set a fresh
+    // interim. Without this, the display can briefly double-show the
+    // tail of the prior utterance.
+    setInterimText("");
     setAnswers((a) => ({ ...a, [p]: phaseTextRef.current }));
 
-    // During the conversation phase, when the patient finishes a turn, stop
-    // the mic so the audio worklet is idle while J.A.C.K.I.E. composes the
-    // next question. We'll auto-restart it after TTS finishes.
+    // ───────────── conversation phase: stop mic to free worklet ─────────────
     if (p === "conversation") {
-      // Defer to next tick so React state updates settle.
+      setProcessingState("thinking");  // optimistic — backend agent_activity confirms
       setTimeout(() => {
         const stopFn = micStopRef.current;
         if (stopFn) stopFn();
       }, 80);
+      return;
+    }
+
+    // ───────────── silence handling: phase-dependent ─────────────
+    // Identity phases (first_name / last_name / dob) are short answers,
+    // so silence at ~1200ms commits via handleStopMic (parse + confirm).
+    //
+    // Complaint phase is OPEN-ENDED — patients articulate over multiple
+    // breaths ("I'm having stomach pains... and nausea... started two
+    // days ago"). Auto-committing on a thinking-pause stops the mic and
+    // loses the rest of their thought. So for complaint we DO NOT
+    // auto-commit; the mic stays open until the patient explicitly taps
+    // it (or the backend's 60s/180s session-abandonment safety net
+    // kicks in). New finals naturally accumulate via the logic above.
+    //
+    // The "Still listening…" pill (1500ms) and "Tap mic when you're
+    // done" hint (3000ms) provide visual reassurance without ending
+    // the recording.
+    if ((p === "first_name" || p === "last_name" || p === "dob") && !confirmRef.current) {
+      lastTranscriptUpdateAtRef.current = Date.now();
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => {
+        if (phaseTextRef.current) {
+          const commitFn = handleStopMicRef.current;
+          if (commitFn) commitFn();
+        }
+      }, 1200);
+    } else if (p === "complaint" && !confirmRef.current) {
+      lastTranscriptUpdateAtRef.current = Date.now();
+      setStillListening(false);  // new partial → reset "stale" indicator
+      if (stillListeningTimerRef.current) clearTimeout(stillListeningTimerRef.current);
+      // Show the soft "Still listening…" cue at 1500ms — does NOT commit.
+      stillListeningTimerRef.current = setTimeout(() => {
+        setStillListening(true);
+      }, 1500);
     }
   }, []);
 
@@ -491,7 +691,6 @@ export default function PatientView() {
 
   const { state: micState, start, stop } = useAudioCapture({ onFrame });
 
-  const audioRef = useRef(null);
   const [ttsState, setTtsState] = useState("idle");
 
   const playTTS = useCallback((text, onEnded) => {
@@ -568,6 +767,14 @@ export default function PatientView() {
     micStopRef.current = stop;
   }, [playTTS, start, stop]);
 
+  // Sync state-mirror refs so the memoized onEvent closure can read them
+  // without re-subscribing the WS on every state change. The handler refs
+  // (handleStopMicRef, onConfirmYesRef, onConfirmRetryRef) are bound later
+  // in a second effect after their callbacks are defined, to avoid TDZ.
+  useEffect(() => { ttsStateRef.current = ttsState; }, [ttsState]);
+  useEffect(() => { confirmRef.current = confirm; }, [confirm]);
+  useEffect(() => { spellingModeRef.current = spellingMode; }, [spellingMode]);
+
   // When the backend signals triage complete, end the session.
   useEffect(() => {
     if (!triageComplete) return;
@@ -578,11 +785,20 @@ export default function PatientView() {
     return () => clearTimeout(t);
   }, [triageComplete, stop]);
 
-  // Play the question prompt whenever the active phase changes.
+  // Play the question prompt whenever the active phase changes, then
+  // auto-start the mic so the patient never has to tap to begin.
   useEffect(() => {
     if (step !== "interview" || !voice) return;
     if (confirm) return; // don't replay the question while we're confirming
-    playTTS(phaseTTS(voice, phase));
+    const prompt = phaseTTS(voice, phase);
+    if (!prompt) return; // conversation phase — JACKIE drives its own TTS
+    playTTS(prompt, () => {
+      // 250ms beat for a natural handoff (matches conversation flow).
+      setTimeout(() => {
+        const startFn = micStartRef.current;
+        if (startFn) startFn();
+      }, 250);
+    });
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
@@ -602,7 +818,11 @@ export default function PatientView() {
     setVoice(selected);
     setStep("interview");
     setPhaseIdx(0);
-    setAnswers({ name: "", dob: "", complaint: "" });
+    // first_name + last_name are captured separately, then combined into
+    // `name` once last_name is confirmed (or skipped). Downstream consumers
+    // see only the combined `name` field.
+    setAnswers({ first_name: "", last_name: "", name: "", dob: "", complaint: "" });
+    lastNameAttemptsRef.current = 0;
     phaseTextRef.current = "";
     lastFinalRef.current = "";
     setInterimText("");
@@ -612,85 +832,173 @@ export default function PatientView() {
     clearIdentity();
   };
 
-  // User taps mic to stop. For name/DOB, parse + confirm; for complaint, save.
+  // Helper: queue mic auto-restart after a TTS prompt finishes. Used by
+  // every commit path so the patient stays hands-free.
+  const scheduleMicRestart = useCallback(() => {
+    setTimeout(() => {
+      const startFn = micStartRef.current;
+      if (startFn) startFn();
+    }, 250);
+  }, []);
+
+  // User commits speech (silence timer, "I'm done" tap, or mic toggle).
+  // For name/DOB, parse + confirm; for complaint, save and wait for advance.
   const handleStopMic = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (stillListeningTimerRef.current) {
+      clearTimeout(stillListeningTimerRef.current);
+      stillListeningTimerRef.current = null;
+    }
+    setStillListening(false);
     stop();
     const captured = (phaseTextRef.current || interimText || "").trim();
     if (!captured) return;
-    if (phase === "name") {
-      const r = parseName(captured);
-      if (!r.ok) {
-        setParseError(r.message);
-        playTTS(phaseRetryTTS(voice, phase));
-        phaseTextRef.current = "";
-        lastFinalRef.current = "";
-        setInterimText("");
-        return;
+    // 200ms "Got it" flash so the patient knows their speech registered
+    // before "Persona is thinking…" appears.
+    setProcessingState("got_it");
+    setTimeout(() => setProcessingState((s) => s === "got_it" ? null : s), 250);
+
+    if (phase === "first_name" || phase === "last_name") {
+      // In spelling mode, the captured value is already letters → name.
+      let value;
+      if (spellingModeRef.current) {
+        value = titleCase(captured);
+      } else {
+        const r = parseName(captured);
+        if (!r.ok) {
+          setParseError(r.message);
+          // Hard skip path for last_name: after 2 failed attempts, give
+          // up and let the clinician fill it in. Avoids derailing the
+          // demo on a difficult surname.
+          if (phase === "last_name") {
+            lastNameAttemptsRef.current += 1;
+            if (lastNameAttemptsRef.current >= 2) {
+              setConfirm({ phase: "last_name", value: "" });
+              playTTS(
+                "That's okay — we'll skip the last name. The clinician can add it later.",
+                scheduleMicRestart
+              );
+              phaseTextRef.current = "";
+              lastFinalRef.current = "";
+              setInterimText("");
+              return;
+            }
+          }
+          playTTS(phaseRetryTTS(voice, phase), scheduleMicRestart);
+          phaseTextRef.current = "";
+          lastFinalRef.current = "";
+          setInterimText("");
+          return;
+        }
+        value = r.value;
       }
       setParseError("");
-      setConfirm({ phase: "name", value: r.value });
-      playTTS(confirmTTS(voice, "name", r.value));
+      setConfirm({ phase, value });
+      playTTS(confirmTTS(voice, phase, value), scheduleMicRestart);
     } else if (phase === "dob") {
       const r = parseDOB(captured);
       if (!r.ok) {
         setParseError(r.message);
-        playTTS(phaseRetryTTS(voice, phase));
+        playTTS(phaseRetryTTS(voice, phase), scheduleMicRestart);
         phaseTextRef.current = "";
         lastFinalRef.current = "";
         setInterimText("");
         return;
       }
       setParseError("");
-      // DOB was skipped by patient refusal — accept and move on.
       if (r.skipped) {
         setConfirm({ phase: "dob", value: r.value });
-        playTTS("That's okay — we'll skip that. Let's move on.");
+        playTTS("Okay — skipping that. Moving on.", scheduleMicRestart);
       } else if (r.fromAge) {
-        // Patient gave age instead of DOB — accept approximate year.
         setConfirm({ phase: "dob", value: r.value });
-        const confirmMsg = `I have you as approximately ${r.age} years old — is that right?`;
-        playTTS(confirmMsg);
+        playTTS(`Around ${r.age} years old — that right?`, scheduleMicRestart);
       } else {
         setConfirm({ phase: "dob", value: r.value });
-        playTTS(confirmTTS(voice, "dob", r.value));
+        playTTS(confirmTTS(voice, "dob", r.value), scheduleMicRestart);
       }
     } else {
       // complaint — keep the text as-is, no confirmation required
       setAnswers((a) => ({ ...a, complaint: captured }));
     }
-  }, [phase, voice, stop, interimText, playTTS]);
+  }, [phase, voice, stop, interimText, playTTS, scheduleMicRestart]);
 
   const onConfirmYes = useCallback(() => {
     if (!confirm) return;
-    setAnswers((a) => ({ ...a, [confirm.phase]: confirm.value }));
-    setStoreIdentity({ [confirm.phase]: confirm.value });
-    const identityData = { [confirm.phase]: confirm.value };
-    // Detect minor patients after DOB confirmation.
-    if (confirm.phase === "dob" && isMinorFromDOB(confirm.value)) {
-      identityData.is_minor = true;
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
     }
-    send && send({
-      type: "identity_update",
-      data: identityData,
+    // Identity propagation: downstream consumers (clinician dashboard,
+    // sessionLog, EvidenceReport) see ONE combined `name` field. We only
+    // emit `name` after last_name confirms (or last_name is skipped) so
+    // the dashboard never shows a half-captured "Janelle" then "Janelle
+    // Tamayo" update.
+    setAnswers((a) => {
+      const next = { ...a, [confirm.phase]: confirm.value };
+      if (confirm.phase === "last_name") {
+        next.name = `${a.first_name || ""} ${confirm.value}`.trim();
+      }
+      return next;
     });
+    if (confirm.phase === "last_name") {
+      // Combine and emit the full name now. If last_name was skipped
+      // (value === ""), we still emit just the first name as the `name`.
+      const fullName = `${(answers.first_name || "")} ${confirm.value}`.trim();
+      setStoreIdentity({ name: fullName });
+      const identityData = { name: fullName };
+      send && send({ type: "identity_update", data: identityData });
+    } else if (confirm.phase === "dob") {
+      setStoreIdentity({ dob: confirm.value });
+      const identityData = { dob: confirm.value };
+      if (isMinorFromDOB(confirm.value)) identityData.is_minor = true;
+      send && send({ type: "identity_update", data: identityData });
+    }
+    // first_name confirms hold off on writing to identityStore — we'll
+    // combine with last_name and emit a single `name` then.
     setConfirm(null);
+    setSpellingMode(false);
     setParseError("");
     setInterimText("");
     phaseTextRef.current = "";
     lastFinalRef.current = "";
     if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
     else setStep("done");
-  }, [confirm, phaseIdx, send]);
+  }, [confirm, phaseIdx, send, answers]);
 
   const onConfirmRetry = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    const rejectedPhase = confirm?.phase;
+    const wasName = rejectedPhase === "first_name" || rejectedPhase === "last_name";
+    const alreadySpellingMode = spellingModeRef.current;
     setConfirm(null);
     setParseError("");
     setInterimText("");
     phaseTextRef.current = "";
     lastFinalRef.current = "";
     setAnswers((a) => ({ ...a, [phase]: "" }));
-    playTTS(phaseRetryTTS(voice, phase));
-  }, [phase, voice, playTTS]);
+    // Spell-out fallback: on the FIRST name rejection (either first or
+    // last name), switch to letter-by-letter mode. After one round of
+    // spelling, fall back to the standard retry on subsequent rejections
+    // (avoids infinite spelling loop). For last_name, also count toward
+    // the skip-after-2-failures cap.
+    if (rejectedPhase === "last_name") {
+      lastNameAttemptsRef.current += 1;
+    }
+    if (wasName && !alreadySpellingMode) {
+      setSpellingMode(true);
+      const which = rejectedPhase === "last_name" ? "last" : "first";
+      const promptText = `Sorry — let's spell that out. Your ${which} name, letter by letter.`;
+      playTTS(promptText, scheduleMicRestart);
+    } else {
+      playTTS(phaseRetryTTS(voice, phase), scheduleMicRestart);
+    }
+  }, [phase, voice, playTTS, confirm, scheduleMicRestart]);
 
   // Text input fallback — when mic is blocked, patient types instead.
   // Simulates a transcript event so the same parsing/confirm flow runs.
@@ -700,12 +1008,12 @@ export default function PatientView() {
     setInterimText(text);
     setAnswers((a) => ({ ...a, [phase]: text }));
     // For name/dob phases, trigger the same parse+confirm flow.
-    if (phase === "name") {
+    if (phase === "first_name" || phase === "last_name") {
       const r = parseName(text);
       if (!r.ok) { setParseError(r.message); return; }
       setParseError("");
-      setConfirm({ phase: "name", value: r.value });
-      playTTS(confirmTTS(voice, "name", r.value));
+      setConfirm({ phase, value: r.value });
+      playTTS(confirmTTS(voice, phase, r.value));
     } else if (phase === "dob") {
       const r = parseDOB(text);
       if (!r.ok) { setParseError(r.message); return; }
@@ -716,6 +1024,12 @@ export default function PatientView() {
     }
     // For complaint/conversation, the text is just captured.
   }, [phase, voice, playTTS]);
+
+  // Bind handler refs AFTER their useCallbacks are declared, so the
+  // memoized onEvent closure can call them via ref without TDZ issues.
+  useEffect(() => { handleStopMicRef.current = handleStopMic; }, [handleStopMic]);
+  useEffect(() => { onConfirmYesRef.current = onConfirmYes; }, [onConfirmYes]);
+  useEffect(() => { onConfirmRetryRef.current = onConfirmRetry; }, [onConfirmRetry]);
 
   const advancePhase = useCallback(() => {
     stop();
@@ -730,6 +1044,32 @@ export default function PatientView() {
     if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
     else setStep("done");
   }, [phase, phaseIdx, stop, interimText, send]);
+
+  // Patient taps "Restart" on the complaint phase — they realised they
+  // want to redo their concern. Clear the captured text, replay the
+  // phase prompt TTS, then auto-restart the mic. Identity (name/dob)
+  // is preserved — they don't have to re-do those.
+  const restartComplaint = useCallback(() => {
+    stop();
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (stillListeningTimerRef.current) {
+      clearTimeout(stillListeningTimerRef.current);
+      stillListeningTimerRef.current = null;
+    }
+    setStillListening(false);
+    phaseTextRef.current = "";
+    lastFinalRef.current = "";
+    setInterimText("");
+    setAnswers((a) => ({ ...a, complaint: "" }));
+    setStoreIdentity({ complaint: "" });
+    send && send({ type: "identity_update", data: { complaint: "" } });
+    // Replay the complaint prompt + auto-restart mic. Same chain the
+    // initial phase-change effect uses.
+    playTTS(phaseTTS(voice, "complaint"), scheduleMicRestart);
+  }, [voice, stop, send, playTTS, scheduleMicRestart]);
 
   return (
     <div style={{
@@ -758,6 +1098,7 @@ export default function PatientView() {
         {step === "interview" && (
           <Interview
             voice={voice}
+            personaName={personaName}
             wsStatus={status}
             ttsState={ttsState}
             micState={micState}
@@ -770,9 +1111,14 @@ export default function PatientView() {
             jackieTurn={jackieTurn}
             framesSent={framesSent}
             noisy={noisyEnvironment}
+            processingState={processingState}
+            spellingMode={spellingMode}
+            stillListening={stillListening}
             onStart={start}
             onStopMic={handleStopMic}
+            onCancel={stop}
             onAdvance={advancePhase}
+            onRestart={restartComplaint}
             onConfirmYes={onConfirmYes}
             onConfirmRetry={onConfirmRetry}
             onTextSubmit={handleTextSubmit}
@@ -859,6 +1205,13 @@ function KioskFooter() {
           V.I.C.T.O.R. Core v4.2.0
         </span>
         <span style={{
+          color: "var(--vic-on-surface-variant)", fontSize: 10,
+          fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em",
+          opacity: 0.7,
+        }}>
+          Powered by AMD MI300X
+        </span>
+        <span style={{
           color: "var(--vic-primary)", fontSize: 11, fontWeight: 700,
           textTransform: "uppercase", letterSpacing: "0.18em",
         }}>
@@ -891,14 +1244,13 @@ function Welcome({ onBegin }) {
         fontSize: 48, fontWeight: 700, letterSpacing: "-0.02em",
         color: "var(--vic-on-surface)", marginBottom: 16,
       }}>
-        We're here to help.
+        Let's get you seen.
       </h1>
       <p style={{
         color: "var(--vic-on-surface-variant)", fontSize: 18, lineHeight: 1.6,
         marginBottom: 24, fontWeight: 300,
       }}>
-        In a moment, you'll have a short conversation with one of our care assistants.
-        Just a few questions out loud — it helps the right clinician get to you sooner.
+        Just a few quick questions out loud — it helps a clinician get to you faster.
       </p>
       <PrivacyNote style={{ marginBottom: 32 }} />
       <button
@@ -940,41 +1292,51 @@ function PrivacyNote({ style }) {
 }
 
 function Interview({
-  voice, wsStatus, ttsState, micState,
+  voice, personaName, wsStatus, ttsState, micState,
   phase, phaseIdx, answers, interimText, confirm, parseError, jackieTurn,
-  framesSent, noisy, onStart, onStopMic, onAdvance, onConfirmYes, onConfirmRetry,
-  onTextSubmit,
+  framesSent, noisy, processingState, spellingMode, stillListening,
+  onStart, onStopMic, onCancel, onAdvance, onConfirmYes, onConfirmRetry,
+  onTextSubmit, onRestart,
 }) {
   const recording = micState === "recording";
   const error = micState === "error";
   const speaking = ttsState === "speaking";
+  const thinking = processingState === "thinking";
+  const gotIt = processingState === "got_it";
   const { label: defaultLabel, title: defaultTitle } = phasePrompt(phase);
   const isConvo = phase === "conversation";
-  // In the conversation phase, the title becomes J.A.C.K.I.E.'s current
-  // question and the label becomes the turn counter.
   const label = isConvo && jackieTurn
     ? `Question ${jackieTurn.turn} of ${jackieTurn.max_turns}`
     : defaultLabel;
   const title = isConvo && jackieTurn?.text ? jackieTurn.text : defaultTitle;
   const captured = answers[phase] || "";
-  const liveText = interimText || captured;
-  const isLast = phaseIdx === PHASES.length - 1;
+  // Show the FULL accumulated answer plus the current interim partial
+  // (if there's a new in-flight utterance not yet committed). Previously
+  // we just used `interimText || captured` which threw away history the
+  // moment a new partial arrived — patients said long complaints and
+  // only saw the most recent sentence, hiding everything they'd already
+  // built up.
+  let liveText;
+  if (!captured && !interimText) liveText = "";
+  else if (!captured) liveText = interimText;
+  else if (!interimText) liveText = captured;
+  else if (captured.toLowerCase().endsWith(interimText.toLowerCase().trim())) liveText = captured;
+  else liveText = `${captured} ${interimText}`;
   const isConfirming = !!confirm;
+  const hasCaptured = !!captured.trim();
 
   let subline;
-  if (isConfirming) subline = "Just want to make sure I got this right.";
-  else if (speaking) subline = "Take your time — I'll be ready to listen when you are.";
-  else if (recording) subline = "I'm listening — share whatever feels right.";
+  if (isConfirming) subline = `Just say "yes" if that's right, or "no" to fix it.`;
+  else if (gotIt) subline = "Got it — one second.";
+  else if (thinking) subline = `${personaName} is putting a thought together.`;
+  else if (speaking) subline = `${personaName} is talking — I'll listen as soon as ${personaName} finishes.`;
+  else if (recording && spellingMode) subline = "Spell your first name out — one letter at a time.";
+  else if (recording) subline = "Go ahead — I'm listening.";
   else if (parseError) subline = parseError;
-  else if (isConvo && jackieTurn?.closing) subline = "All done — wrapping up your check-in.";
+  else if (isConvo && jackieTurn?.closing) subline = "All done — a clinician will be with you soon.";
   else if (isConvo) subline = "Take your time — answer when you're ready.";
-  else if (captured && phase === "complaint") subline = "Thank you for sharing that. Tap continue when you're ready, or the mic if there's more.";
-  else if (phase === "complaint") subline = "Whenever you're ready, tap the microphone — I'm here to listen.";
-  else subline = "Whenever you're ready, tap the microphone and share with me.";
-
-  // After complaint we advance into the J.A.C.K.I.E. follow-up loop, not done.
-  const advanceLabel = phase === "complaint" ? "Continue — follow-up questions →" : "Continue →";
-  const canAdvance = !!captured.trim() && !isConfirming;
+  else if (captured && phase === "complaint") subline = `Thanks for sharing. Tap "I'm done" when you've said everything, or keep talking.`;
+  else subline = "Just a moment — getting ready to listen.";
 
   return (
     <div style={{
@@ -1004,42 +1366,65 @@ function Interview({
         }}>
           {subline}
         </p>
+        {thinking && <ThinkingDots personaName={personaName} />}
       </div>
 
       {!isConfirming && (
         <MicCircle recording={recording} error={error} onClick={recording ? onStopMic : onStart} />
       )}
 
-      <StatusPill recording={recording} error={error} ttsState={ttsState} wsStatus={wsStatus} noisy={noisy} />
+      {/* Soft "I'm still here" cue during the open-ended complaint phase.
+          Appears when partials stop arriving for 1500ms but BEFORE the
+          2500ms commit. Pure UI nudge — answers "did it hear me?" anxiety. */}
+      {stillListening && phase === "complaint" && recording && (
+        <StillListeningPill />
+      )}
+
+      {/* Topic-prompt chips on the complaint phase — gentle invitations
+          to share more. Helps stressed/in-pain patients structure their
+          thoughts and naturally produces longer speech (good for Helios
+          biomarker accuracy). Hidden during TTS playback so it doesn't
+          compete with what the persona is saying. */}
+      {phase === "complaint" && !speaking && !isConfirming && (
+        <ComplaintTopicChips />
+      )}
+
+      <StatusPill
+        recording={recording}
+        error={error}
+        ttsState={ttsState}
+        wsStatus={wsStatus}
+        noisy={noisy}
+        processingState={processingState}
+        personaName={personaName}
+      />
 
       {error && <MicErrorHelp onRetry={onStart} onTextSubmit={onTextSubmit} phase={phase} />}
 
       {isConfirming ? (
         <ConfirmCard confirm={confirm} onYes={onConfirmYes} onRetry={onConfirmRetry} />
       ) : (
-        <TranscriptCard transcript={liveText} active={recording || speaking} phase={phase} />
+        <TranscriptCard
+          transcript={liveText}
+          active={recording || speaking}
+          phase={phase}
+          spellingMode={spellingMode}
+        />
       )}
 
-      {!isConfirming && phase === "complaint" && (
-        <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
-          <button
-            onClick={onAdvance}
-            disabled={!canAdvance}
-            style={{
-              padding: "14px 36px", borderRadius: 999,
-              background: canAdvance
-                ? "linear-gradient(to right, var(--vic-primary), #008ea1)"
-                : "var(--vic-bg-highest)",
-              color: canAdvance ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
-              fontWeight: 700, fontSize: 16,
-              border: "none", cursor: canAdvance ? "pointer" : "not-allowed",
-              boxShadow: canAdvance ? "0 8px 30px rgba(47, 217, 244, 0.3)" : "none",
-              display: "flex", alignItems: "center", gap: 12,
-            }}
-          >
-            {advanceLabel}
-          </button>
-        </div>
+      {!isConfirming && (
+        <CommitButton
+          phase={phase}
+          recording={recording}
+          hasCaptured={hasCaptured}
+          processingState={processingState}
+          ttsState={ttsState}
+          personaName={personaName}
+          onCommit={onStopMic}
+          onCancel={onCancel}
+          onAdvance={onAdvance}
+          onRestart={onRestart}
+        />
       )}
 
       <PrivacyNote />
@@ -1051,15 +1436,222 @@ function Interview({
           textTransform: "uppercase", letterSpacing: "0.18em",
         }}>
           voice: {voice} · phase: {phase} · ws: {wsStatus} · tts: {ttsState} · frames: {framesSent}
+          {spellingMode && " · spelling"}
+          {processingState && ` · ${processingState}`}
         </div>
       )}
     </div>
   );
 }
 
+// "Persona is thinking…" 3-dot animation under the question card. Plays
+// only while processingState === "thinking" so it doesn't compete with
+// the listening or speaking visual states.
+function ThinkingDots({ personaName }) {
+  return (
+    <div style={{
+      marginTop: 14, display: "inline-flex", alignItems: "center", gap: 8,
+      padding: "6px 14px", borderRadius: 999,
+      background: "rgba(255, 185, 95, 0.08)",
+      border: "1px solid rgba(255, 185, 95, 0.25)",
+    }}>
+      <span style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+        color: "var(--vic-tertiary)", letterSpacing: "0.08em",
+      }}>{personaName} is thinking</span>
+      <span style={{ display: "inline-flex", gap: 3 }}>
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            style={{
+              width: 4, height: 4, borderRadius: "50%",
+              background: "var(--vic-tertiary)",
+              animation: `vic-pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+            }}
+          />
+        ))}
+      </span>
+    </div>
+  );
+}
+
+// Topic-prompt chips for the complaint phase — gentle invitations to
+// help stressed patients structure what they want to share. Mapped to
+// the OPQRST mnemonic that ED triage nurses actually use (Onset, Quality,
+// Radiation, Severity, Time, Provocation) per ENA / SAEM standards.
+// Plus one psychological-safety prompt ("What's worrying you most?")
+// which research shows surfaces clinically important fears patients
+// otherwise omit. Phrased as open questions, not a checklist.
+//
+// Sources informing this choice:
+// - SAEM CDEM curriculum: complaint-directed history (OPQRST)
+// - Emergency Nursing Association triage flashcards (OPQRST + SAMPLE)
+// - 90% of diagnostic info is in the patient history (SAEM)
+function ComplaintTopicChips() {
+  const chips = [
+    { Icon: Clock,         text: "When did it start?" },          // Onset
+    { Icon: MessageCircle, text: "What does it feel like?" },     // Quality
+    { Icon: Gauge,         text: "How bad is it, 1 to 10?" },     // Severity
+    { Icon: Flag,          text: "What's worrying you most?" },   // patient-led concern
+  ];
+  return (
+    <div style={{
+      display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center",
+      maxWidth: 720,
+    }}>
+      {chips.map(({ Icon, text }, i) => (
+        <div
+          key={i}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "6px 12px", borderRadius: 999,
+            background: "rgba(47, 217, 244, 0.04)",
+            border: "1px solid rgba(47, 217, 244, 0.15)",
+            fontSize: 12, color: "var(--vic-on-surface-variant)",
+            fontFamily: "'Inter', system-ui, sans-serif",
+          }}
+        >
+          <Icon size={14} strokeWidth={2} />
+          <span>{text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Soft "I'm still here" pill — appears on the complaint phase when the
+// patient pauses for ~1500ms but BEFORE the silence timer commits at
+// 2500ms. Reassures them the mic hasn't given up. Disappears the
+// moment a new partial arrives or the timer commits.
+function StillListeningPill() {
+  return (
+    <div style={{
+      display: "inline-flex", alignItems: "center", gap: 8,
+      padding: "6px 14px", borderRadius: 999,
+      background: "rgba(47, 217, 244, 0.06)",
+      border: "1px solid rgba(47, 217, 244, 0.2)",
+      marginTop: -8,  // pulls it closer to the mic circle
+      animation: "vic-pulse 2s ease-in-out infinite",
+    }}>
+      <span style={{ fontSize: 14 }}>💭</span>
+      <span style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+        color: "var(--vic-on-surface-variant)", letterSpacing: "0.08em",
+        textTransform: "uppercase",
+      }}>Still listening — take your time</span>
+    </div>
+  );
+}
+
+// Primary commit affordance for every voice phase. Replaces "tap mic to
+// stop" as the patient's clear "I'm done" signal. State machine:
+//   - listening + captured text → "I'm done →" (primary teal)
+//   - listening + no text → "Cancel" (secondary outline)
+//   - thinking / speaking → disabled status label
+//   - complaint w/ captured text → "Continue — follow-up questions →"
+//     (existing advance flow takes over)
+function CommitButton({
+  phase, recording, hasCaptured, processingState, ttsState, personaName,
+  onCommit, onCancel, onAdvance, onRestart,
+}) {
+  const thinking = processingState === "thinking";
+  const speaking = ttsState === "speaking";
+
+  // Complaint phase, captured something → use the existing advance button
+  // because we want to KEEP the captured text and move on, not re-parse.
+  // Also offer a Restart so the patient can redo their concern from scratch
+  // if they realised mid-thought they want a different framing.
+  if (phase === "complaint" && hasCaptured && !recording && !thinking && !speaking) {
+    return (
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+        <button onClick={onRestart} style={secondaryBtnStyle}>
+          ↺ Restart
+        </button>
+        <button
+          onClick={onAdvance}
+          style={primaryBtnStyle(true)}
+        >
+          Continue — follow-up questions →
+        </button>
+      </div>
+    );
+  }
+
+  // Processing or speaking → disabled with status text.
+  if (thinking || speaking) {
+    return (
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+        <button disabled style={primaryBtnStyle(false)}>
+          {thinking ? `${personaName} is thinking…` : `${personaName} is speaking…`}
+        </button>
+      </div>
+    );
+  }
+
+  // Recording with captured text → commit affordance. Label varies by phase:
+  //   - Identity phases (first/last name, dob): "I'm done →" — short answers,
+  //     committing immediately is what the patient expects.
+  //   - Complaint phase: "Send →" — softer than "I'm done" so the patient
+  //     doesn't feel they're committing to a final sentence; reads more like
+  //     submitting a message they've finished writing. Sits alongside the
+  //     mic-tap path (still works) so they have two ways to commit.
+  if (recording && hasCaptured) {
+    const label = phase === "complaint" ? "Send →" : "I'm done →";
+    return (
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+        <button onClick={onCommit} style={primaryBtnStyle(true)}>
+          {label}
+        </button>
+      </div>
+    );
+  }
+
+  // Recording with no text yet → quiet Cancel option (skip if not recording).
+  if (recording) {
+    return (
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+        <button onClick={onCancel} style={secondaryBtnStyle}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  // Idle (waiting for TTS to finish or for first auto-start) → no button.
+  return null;
+}
+
+function primaryBtnStyle(enabled) {
+  return {
+    padding: "14px 36px", borderRadius: 999,
+    background: enabled
+      ? "linear-gradient(to right, var(--vic-primary), #008ea1)"
+      : "var(--vic-bg-highest)",
+    color: enabled ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
+    fontWeight: 700, fontSize: 16,
+    border: "none", cursor: enabled ? "pointer" : "not-allowed",
+    boxShadow: enabled ? "0 8px 30px rgba(47, 217, 244, 0.3)" : "none",
+    display: "flex", alignItems: "center", gap: 12,
+    fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+    letterSpacing: "0.01em",
+  };
+}
+
+const secondaryBtnStyle = {
+  padding: "12px 28px", borderRadius: 999,
+  background: "transparent",
+  color: "var(--vic-on-surface-variant)",
+  border: "1px solid rgba(255, 255, 255, 0.18)",
+  fontWeight: 600, fontSize: 14, cursor: "pointer",
+  fontFamily: "'Space Grotesk', 'Inter', sans-serif",
+};
+
 function PhaseStepper({ phaseIdx, answers }) {
+  // 5 steps now (split first/last name). Slightly more granular but
+  // honest about what's happening. The mono labels stay short to fit.
   const items = [
-    { key: "name", label: "Name" },
+    { key: "first_name", label: "First name" },
+    { key: "last_name", label: "Last name" },
     { key: "dob", label: "Date of birth" },
     { key: "complaint", label: "Reason for visit" },
     { key: "conversation", label: "Follow-up" },
@@ -1137,7 +1729,8 @@ function MicCircle({ recording, error, onClick }) {
 function MicErrorHelp({ onRetry, onTextSubmit, phase }) {
   const [textInput, setTextInput] = useState("");
   const placeholders = {
-    name: "Type your full name here...",
+    first_name: "Type your first name here...",
+    last_name: "Type your last name here...",
     dob: "Type your date of birth (e.g. January 15, 1980)...",
     complaint: "Describe your symptoms here...",
     conversation: "Type your answer here...",
@@ -1209,39 +1802,88 @@ function MicErrorHelp({ onRetry, onTextSubmit, phase }) {
   );
 }
 
-function StatusPill({ recording, error, ttsState, wsStatus, noisy }) {
-  let label, color;
-  if (error) { label = "Microphone permission denied"; color = "var(--vic-error)"; }
-  else if (noisy) { label = "It's quite loud — lean closer and speak clearly"; color = "var(--vic-secondary)"; }
-  else if (recording) { label = "Listening Now..."; color = "var(--vic-primary)"; }
-  else if (ttsState === "speaking") { label = "Speaking..."; color = "var(--vic-primary)"; }
-  else if (wsStatus === "open") { label = "Ready — tap to speak"; color = "var(--vic-primary)"; }
-  else if (wsStatus === "closed" || wsStatus === "error") { label = "Reconnecting..."; color = "var(--vic-secondary)"; }
-  else { label = `Connecting (${wsStatus})…`; color = "var(--vic-on-surface-variant)"; }
+function StatusPill({ recording, error, ttsState, wsStatus, noisy, processingState, personaName }) {
+  let label, color, bg, border, animate;
+  const persona = personaName || "Victor";
+  if (error) {
+    label = "Microphone permission denied";
+    color = "var(--vic-error)";
+    bg = "rgba(255, 180, 171, 0.1)";
+    border = "rgba(255, 180, 171, 0.2)";
+  } else if (processingState === "got_it") {
+    label = "Got it";
+    color = "var(--vic-primary)";
+    bg = "rgba(47, 217, 244, 0.1)";
+    border = "rgba(47, 217, 244, 0.2)";
+  } else if (processingState === "thinking") {
+    label = `${persona} is thinking…`;
+    color = "var(--vic-tertiary)";
+    bg = "rgba(255, 185, 95, 0.1)";
+    border = "rgba(255, 185, 95, 0.25)";
+    animate = true;
+  } else if (noisy) {
+    label = "It's quite loud — lean closer and speak clearly";
+    color = "var(--vic-secondary)";
+    bg = "rgba(47, 217, 244, 0.1)";
+    border = "rgba(47, 217, 244, 0.2)";
+  } else if (recording) {
+    label = "Listening now…";
+    color = "var(--vic-primary)";
+    bg = "rgba(47, 217, 244, 0.1)";
+    border = "rgba(47, 217, 244, 0.2)";
+    animate = true;
+  } else if (ttsState === "speaking") {
+    label = `${persona} is speaking…`;
+    color = "var(--vic-primary)";
+    bg = "rgba(47, 217, 244, 0.1)";
+    border = "rgba(47, 217, 244, 0.2)";
+    animate = true;
+  } else if (wsStatus === "open") {
+    label = "One moment…";
+    color = "var(--vic-on-surface-variant)";
+    bg = "rgba(47, 217, 244, 0.06)";
+    border = "rgba(47, 217, 244, 0.15)";
+  } else if (wsStatus === "closed" || wsStatus === "error") {
+    label = "Reconnecting…";
+    color = "var(--vic-secondary)";
+    bg = "rgba(192, 193, 255, 0.08)";
+    border = "rgba(192, 193, 255, 0.2)";
+  } else {
+    label = `Connecting (${wsStatus})…`;
+    color = "var(--vic-on-surface-variant)";
+    bg = "rgba(47, 217, 244, 0.06)";
+    border = "rgba(47, 217, 244, 0.15)";
+  }
 
   return (
     <div style={{
       display: "inline-flex", alignItems: "center", gap: 8,
       padding: "8px 16px", borderRadius: 999,
-      background: error ? "rgba(255, 180, 171, 0.1)" : "rgba(47, 217, 244, 0.1)",
-      border: `1px solid ${error ? "rgba(255, 180, 171, 0.2)" : "rgba(47, 217, 244, 0.2)"}`,
+      background: bg,
+      border: `1px solid ${border}`,
+      transition: "background 0.2s, border-color 0.2s",
     }}>
       <span style={{
         width: 8, height: 8, borderRadius: "50%", background: color,
-        animation: recording || ttsState === "speaking" ? "ping 1.5s infinite" : "none",
+        animation: animate ? "ping 1.5s infinite" : "none",
       }} />
       <span style={{
-        color, fontSize: 12, fontWeight: 500,
+        color, fontSize: 12, fontWeight: 600,
         textTransform: "uppercase", letterSpacing: "0.08em",
       }}>{label}</span>
     </div>
   );
 }
 
-function TranscriptCard({ transcript, active, phase }) {
+function TranscriptCard({ transcript, active, phase, spellingMode }) {
   const empty = !transcript;
-  const heading = phase === "name"
-    ? "Heard — Name"
+  const which = phase === "last_name" ? "last" : "first";
+  const heading = spellingMode
+    ? `Spelling — ${which === "last" ? "Last" : "First"} name`
+    : phase === "first_name"
+    ? "Heard — First name"
+    : phase === "last_name"
+    ? "Heard — Last name"
     : phase === "dob"
     ? "Heard — Date of birth"
     : phase === "complaint"
@@ -1249,8 +1891,12 @@ function TranscriptCard({ transcript, active, phase }) {
     : phase === "conversation"
     ? "Heard — Your answer"
     : "Live Transcription";
-  const placeholder = phase === "name"
-    ? "Awaiting your name…"
+  const placeholder = spellingMode
+    ? `Spell your ${which} name out loud — J … A … N … E …`
+    : phase === "first_name"
+    ? "Awaiting your first name…"
+    : phase === "last_name"
+    ? "Awaiting your last name…"
     : phase === "dob"
     ? "Awaiting your date of birth…"
     : phase === "complaint"
@@ -1262,40 +1908,98 @@ function TranscriptCard({ transcript, active, phase }) {
   return (
     <div className="vic-glass" style={{
       width: "100%", padding: 32, borderRadius: 32,
-      border: "1px solid rgba(69, 70, 77, 0.15)",
+      border: `1px solid ${spellingMode ? "rgba(255, 185, 95, 0.25)" : "rgba(69, 70, 77, 0.15)"}`,
       boxShadow: "0 32px 64px -12px rgba(0, 0, 0, 0.5)",
       minHeight: 140,
     }}>
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-        <span style={{ color: "var(--vic-primary)", fontSize: 22, marginTop: 4 }}>✦</span>
+        <span style={{
+          color: spellingMode ? "var(--vic-tertiary)" : "var(--vic-primary)",
+          fontSize: 22, marginTop: 4,
+        }}>{spellingMode ? "🔤" : "✦"}</span>
         <div style={{ flex: 1 }}>
           <div style={{
             fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.2em", color: "rgba(47, 217, 244, 0.6)", marginBottom: 8,
+            letterSpacing: "0.2em",
+            color: spellingMode ? "rgba(255, 185, 95, 0.8)" : "rgba(47, 217, 244, 0.6)",
+            marginBottom: 8,
           }}>
             {heading}
           </div>
-          <p
-            className={active && !empty ? "vic-typing-cursor" : ""}
-            style={{
-              fontSize: 24, lineHeight: 1.55, color: "var(--vic-on-surface)",
-              fontWeight: 400, margin: 0,
-              opacity: empty ? 0.4 : 1,
-              fontStyle: empty ? "italic" : "normal",
-            }}
-          >
-            {empty ? placeholder : transcript}
-          </p>
+          {spellingMode ? (
+            <SpelledLetters value={transcript} placeholder={placeholder} />
+          ) : (
+            <p
+              className={active && !empty ? "vic-typing-cursor" : ""}
+              style={{
+                fontSize: 24, lineHeight: 1.55, color: "var(--vic-on-surface)",
+                fontWeight: 400, margin: 0,
+                opacity: empty ? 0.4 : 1,
+                fontStyle: empty ? "italic" : "normal",
+              }}
+            >
+              {empty ? placeholder : transcript}
+            </p>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
+function SpelledLetters({ value, placeholder }) {
+  if (!value) {
+    return (
+      <p style={{
+        fontSize: 18, lineHeight: 1.55, color: "var(--vic-on-surface-variant)",
+        fontStyle: "italic", margin: 0, opacity: 0.6,
+      }}>{placeholder}</p>
+    );
+  }
+  const letters = value.split("");
+  return (
+    <div style={{
+      display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline",
+    }}>
+      {letters.map((ch, i) => (
+        <span
+          key={i}
+          style={{
+            display: "inline-grid", placeItems: "center",
+            minWidth: 36, height: 44,
+            padding: "0 8px",
+            borderRadius: 8,
+            background: "rgba(255, 185, 95, 0.1)",
+            border: "1px solid rgba(255, 185, 95, 0.3)",
+            fontFamily: "'Space Grotesk', sans-serif",
+            fontSize: 26, fontWeight: 700,
+            color: "var(--vic-on-surface)",
+            letterSpacing: "0.02em",
+          }}
+        >
+          {ch}
+        </span>
+      ))}
+      <span style={{
+        marginLeft: 12,
+        fontFamily: "'Inter', sans-serif",
+        fontSize: 14, color: "var(--vic-on-surface-variant)",
+      }}>
+        → <strong style={{ color: "var(--vic-on-surface)", fontWeight: 600 }}>{titleCase(value)}</strong>
+      </span>
+    </div>
+  );
+}
+
 function ConfirmCard({ confirm, onYes, onRetry }) {
-  const heading = confirm.phase === "name"
-    ? "Just want to make sure I have your name right."
-    : "And your date of birth — did I get this right?";
+  const heading =
+    confirm.phase === "first_name"
+      ? "Just want to make sure I got your first name right."
+      : confirm.phase === "last_name"
+      ? confirm.value
+        ? "And your last name — did I get this right?"
+        : "Skipping your last name — the clinician can add it later."
+      : "And your date of birth — did I get this right?";
   return (
     <div className="vic-glass" style={{
       width: "100%", padding: 32, borderRadius: 32,

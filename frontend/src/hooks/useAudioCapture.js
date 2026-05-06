@@ -64,7 +64,19 @@ export function useAudioCapture({ onFrame } = {}) {
     if (state === "recording" || state === "requesting") return;
     setState("requesting");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Explicit constraints: echoCancellation matters for the kiosk —
+      // when the patient hears TTS over speakers (no headphones), the
+      // mic can pick it up and Deepgram transcribes the assistant's own
+      // voice back. echoCancellation suppresses that loop. noiseSuppression
+      // and autoGainControl smooth out the ER-room audio. Defaults vary
+      // by browser, so we set them explicitly.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
       const ctx = new AudioContext();
       ctxRef.current = ctx;

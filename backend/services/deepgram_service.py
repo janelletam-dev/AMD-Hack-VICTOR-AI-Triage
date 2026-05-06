@@ -27,6 +27,7 @@ import asyncio
 import json
 import logging
 import struct
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -35,6 +36,17 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from config import settings
+
+
+# Writer-stall watchdog: if the outbound queue grows past this fraction of
+# its cap AND the writer hasn't successfully sent in WRITER_STALL_SECONDS,
+# we assume the WS is silently dead (half-open TCP, e.g. NAT timeout) and
+# force a reconnect. The websockets library's ping/pong should usually
+# catch this within ping_interval + ping_timeout (40s here), but in
+# practice we've seen sessions where neither reader nor writer raises and
+# frames just pile up. The watchdog is the belt to ping/pong's suspenders.
+WRITER_STALL_QUEUE_FRACTION = 0.5  # 50% of MAX queue
+WRITER_STALL_SECONDS = 5.0
 
 
 def _streaming_wav_header(sample_rate: int = 16_000, channels: int = 1) -> bytes:
@@ -118,6 +130,10 @@ class DeepgramService:
         self._reconnect_attempts = 0
         self._reconnecting = False
         self._last_partial_text = ""
+        # Watchdog state — updated each time the writer successfully ships
+        # a frame to Deepgram. Initialised to "now" on start so the first
+        # few seconds before audio flows don't trigger a false stall.
+        self._last_writer_send_at = 0.0
 
         if not self.api_key:
             log.warning("DEEPGRAM_API_KEY not set — STT will be disabled")
@@ -146,6 +162,9 @@ class DeepgramService:
             return False
 
         self._started = True
+        # Reset the watchdog clock — gives the first few seconds before
+        # audio starts flowing without false stall alerts.
+        self._last_writer_send_at = time.time()
         log.info("deepgram /v2 connected (model=%s)", DEEPGRAM_MODEL)
         self._reader_task = asyncio.create_task(self._reader())
         self._writer_task = asyncio.create_task(self._writer())
@@ -167,9 +186,29 @@ class DeepgramService:
 
         Kept synchronous so the audio_ws receive loop doesn't need to await
         on every PCM frame.
+
+        Watchdog: if the queue is filling up AND the writer hasn't shipped
+        a frame in WRITER_STALL_SECONDS, the WS is silently dead (NAT
+        timeout / half-open TCP). Force a reconnect — neither reader nor
+        writer raised so reconnect won't fire on its own.
         """
         if not self._started:
             return
+        # Watchdog check (cheap — just qsize + a timestamp diff)
+        queue_size = self._tx_queue.qsize()
+        if queue_size > _TX_QUEUE_MAX * WRITER_STALL_QUEUE_FRACTION:
+            idle = time.time() - (self._last_writer_send_at or 0)
+            if idle > WRITER_STALL_SECONDS and not self._reconnecting:
+                log.warning(
+                    "deepgram writer stalled (%d frames queued, %.1fs since last send) — forcing reconnect",
+                    queue_size, idle,
+                )
+                try:
+                    asyncio.get_event_loop().create_task(self._reconnect())
+                except RuntimeError:
+                    pass  # no running loop in this thread (called from worker bridge)
+                # Don't enqueue more frames during a stall — they'd just be dropped
+                return
         try:
             self._tx_queue.put_nowait(audio_bytes)
         except asyncio.QueueFull:
@@ -208,17 +247,29 @@ class DeepgramService:
         try:
             await self._ws.send(_streaming_wav_header(settings.sample_rate_hz, 1))
             log.info("deepgram: sent streaming WAV header (16-bit PCM, %d Hz, mono)", settings.sample_rate_hz)
+            self._last_writer_send_at = time.time()
         except Exception:
-            log.exception("deepgram: failed to send WAV header")
+            log.exception("deepgram: failed to send WAV header — triggering reconnect")
+            if self._started and not self._reconnecting:
+                asyncio.create_task(self._reconnect())
             return
         try:
             while True:
                 frame = await self._tx_queue.get()
                 await self._ws.send(frame)
+                # Watchdog timestamp — proves the writer is still draining
+                # the queue. send() reads this to detect a stalled writer.
+                self._last_writer_send_at = time.time()
         except (asyncio.CancelledError, ConnectionClosed):
             return
         except Exception:
-            log.exception("deepgram writer crashed")
+            # Any other exception means the WS is in a bad state but
+            # didn't surface as ConnectionClosed (rare, but happens with
+            # half-open sockets). Fire reconnect — the old code just
+            # logged and let frames pile up forever in the queue.
+            log.exception("deepgram writer crashed — triggering reconnect")
+            if self._started and not self._reconnecting:
+                asyncio.create_task(self._reconnect())
 
     async def _reader(self) -> None:
         assert self._ws is not None

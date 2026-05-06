@@ -29,15 +29,24 @@ export default function SOAPCard({ soap, vitals, demographics }) {
         </span>
       </div>
 
-      {demographics && (
+      {demographics && (demographics.demo || demographics.symptom || demographics.risk) && (
         <div style={{
           padding: "12px 28px", display: "flex", gap: 24, flexWrap: "wrap",
           background: "var(--vic-bg)", borderBottom: "1px solid rgba(69, 70, 77, 0.12)",
           fontSize: 12, color: "var(--vic-on-surface-variant)",
         }}>
-          <Demo label="Demographics" value={demographics.demo} accent="var(--vic-primary)" />
-          <Demo label="Presenting Symptom" value={demographics.symptom} accent="var(--vic-primary)" />
-          <Demo label="Risk Factor" value={demographics.risk} accent="var(--vic-tertiary)" />
+          {/* Each Demo only renders when its value is truthy — avoids
+              showing fabricated "—" placeholders that could read as
+              "we have this info" when in fact we don't yet. */}
+          {demographics.demo && (
+            <Demo label="Demographics" value={demographics.demo} accent="var(--vic-primary)" />
+          )}
+          {demographics.symptom && (
+            <Demo label="Presenting Symptom" value={demographics.symptom} accent="var(--vic-primary)" />
+          )}
+          {demographics.risk && (
+            <Demo label="Risk Factor" value={demographics.risk} accent="var(--vic-tertiary)" />
+          )}
         </div>
       )}
 

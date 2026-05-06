@@ -28,11 +28,68 @@ import {
 
 const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
 
-const DEFAULT_DEMOGRAPHICS = {
-  demo: "Filipino / Male / 59",
-  symptom: "Exertion Fatigue",
-  risk: "High CVD Risk Profile",
-};
+// Demographics on the SOAP card are derived live from captured data —
+// never hardcoded. Anything we don't actually know stays empty (the
+// SOAPCard skips fields with falsy values). Showing fabricated info
+// like "High CVD Risk Profile" before the patient has been asked about
+// family history would be clinically misleading on a real demo.
+
+function ageFromDOB(dob) {
+  if (!dob || dob === "Not provided") return null;
+  // Handles "April 13, 1990" (parseDOB output) and "1990-04-13" (ISO)
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) {
+    const yearMatch = String(dob).match(/\b(19\d{2}|20\d{2})\b/);
+    if (!yearMatch) return null;
+    return new Date().getFullYear() - parseInt(yearMatch[1], 10);
+  }
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+function buildDemographics(identity, flagQueue) {
+  if (!identity) identity = {};
+  // Demo line: name + age (gender deferred — not yet captured in flow)
+  const demoParts = [];
+  if (identity.name) demoParts.push(identity.name);
+  const age = ageFromDOB(identity.dob);
+  if (age != null) demoParts.push(`${age}y`);
+
+  // Presenting symptom: prefer concordance flag's clinical label if
+  // fired (more specific than raw complaint text), fall back to the
+  // captured complaint truncated.
+  const topFlag = flagQueue && flagQueue[0];
+  const symptomFromFlag = topFlag?.triage_label;
+  const complaintText = (identity.complaint || "").trim();
+  const symptomFromComplaint = complaintText
+    ? (complaintText.length > 40 ? complaintText.slice(0, 40) + "…" : complaintText)
+    : null;
+  const symptom = symptomFromFlag || symptomFromComplaint || null;
+
+  // Risk: ONLY surface real concordance signals. No "High CVD Risk Profile"
+  // before the patient's been asked about family history. If a Tier 1/2
+  // flag fired and lists risk_factors, surface those. Otherwise empty.
+  let risk = null;
+  if (topFlag?.risk_factors?.length) {
+    const factors = topFlag.risk_factors.slice(0, 2).join(", ");
+    risk = `${factors} risk factor${topFlag.risk_factors.length > 1 ? "s" : ""}`;
+  } else if (topFlag?.tier === 1) {
+    risk = "Concordance flag — Tier 1";
+  } else if (topFlag?.tier === 2) {
+    risk = "Concordance flag — Tier 2";
+  }
+
+  // Hide the section entirely if NOTHING is known yet.
+  if (!demoParts.length && !symptom && !risk) return null;
+  return {
+    demo: demoParts.join(" · ") || null,
+    symptom,
+    risk,
+  };
+}
 
 export default function ClinicianDashboard() {
   const navigate = useNavigate();
@@ -300,7 +357,7 @@ export default function ClinicianDashboard() {
               </section>
             )}
 
-            <SOAPCard soap={soap} demographics={DEFAULT_DEMOGRAPHICS} />
+            <SOAPCard soap={soap} demographics={buildDemographics(identity, flagQueue)} />
 
             <ActionFooter
               hasSoap={!!soap}
@@ -441,7 +498,7 @@ function BiomarkerCard({ data, unavailable }) {
         color: "var(--vic-on-surface-variant)", opacity: 0.6,
         fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
       }}>
-        15s voice sample · mental wellness model
+        Acoustic biomarker analysis · ≥15s validated
       </div>
       {unavailable || allZeros ? (
         <div style={{
