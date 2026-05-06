@@ -54,6 +54,11 @@ class SessionLog:
     identity: dict[str, Any] = field(default_factory=dict)
     emergency: dict[str, Any] | None = None
     triage_complete: bool = False
+    # Receipt populated when the clinician pushes the chart to Epic.
+    # Carries doc_id, posted_at (epoch s), and a small bundle summary so
+    # the EMR view can show a "Posted at …" banner without re-fetching
+    # the full FHIR document.
+    epic_push: dict[str, Any] | None = None
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -68,6 +73,7 @@ class SessionLog:
             "identity": self.identity,
             "emergency": self.emergency,
             "triage_complete": self.triage_complete,
+            "epic_push": self.epic_push,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
         }

@@ -1,24 +1,32 @@
-"""thymia Helios voice-biomarker client.
+"""thymia voice-biomarker client — Helios (real) + Apollo/Psyche (synthetic).
 
-Helios is NOT a streaming API — each "model run" is a complete recording
-(min 10s, formats FLAC/MP3/MP4/Ogg/WebM/WAV) submitted via a presigned
-upload URL, then polled.
+Only **Helios** is wired to the real thymia API. Apollo and Psyche are
+transcript-driven demo-mode generators that produce plausible dashboard
+values without any API call. See below for why.
 
-Workflow (verified against https://api.thymia.ai/openapi.json):
-  1. POST /v1/models/mental-wellness   → { id, recordingUploadUrl }
-  2. PUT recordingUploadUrl with the WAV bytes (Content-Type: audio/wav)
-  3. Poll GET /v1/models/mental-wellness/{id} every ~3s until
-     status ∈ {COMPLETE_OK, COMPLETE_ERROR}.
+Helios (real — POST /v1/models/mental-wellness):
+  Each "model run" is a complete recording (min 10s, WAV/FLAC/MP3/MP4/
+  Ogg/WebM) submitted via a presigned upload URL, then polled.
+  Returns: stress, distress, exhaustion, sleepPropensity, lowSelfEsteem,
+  mentalStrain (bucketed 0.0|0.33|0.66|1.0).
 
-Biomarker fields returned (per docs/helios/interpreting-results):
-  stress, distress, exhaustion, sleepPropensity, lowSelfEsteem, mentalStrain
-  (each as bucketed {value: 0.0|0.33|0.66|1.0}, plus uniform* continuous variants)
+Apollo (synthetic — real API is POST /v1/models/apollo):
+  The real Apollo endpoint requires *two* recordings (mood-question
+  response + read-aloud passage, each ≥15s) and returns depression /
+  anxiety disorder scores — not valence/arousal/energy/engagement.
+  The kiosk captures a single complaint recording, so Apollo's
+  two-recording requirement cannot be met. The dashboard's Apollo
+  values are a transcript-driven synthetic construct for demo
+  visualization only.
 
-Notes:
-- Company name is lowercase: "thymia".
-- Auth header is `x-api-key` (not Authorization).
-- We default to Helios only for live triage; Apollo requires two recordings
-  and is out of scope for the kiosk hot path.
+Psyche (synthetic — no thymia API exists):
+  "Psyche" is not a thymia product. The docs list Helios, Apollo, and
+  Sentinel (voice-agent safety). The affect breakdown (dominant emotion
+  + 7-axis distribution) shown on the dashboard is entirely synthetic,
+  generated from transcript keyword matching.
+
+Verified against https://api.thymia.ai/openapi.json (2026-05-06).
+Auth header: `x-api-key`. Company name is lowercase: "thymia".
 """
 from __future__ import annotations
 
@@ -242,27 +250,24 @@ class ThymiaService:
         language: str = "en-US",
         transcript: str | None = None,
     ) -> ApolloResult | None:
-        """Run thymia Apollo (mood / energy) on a recording.
+        """Return synthetic Apollo values (demo) or None (production).
 
-        In demo mode returns a transcript-aware scripted result so the
-        dashboard has live-looking valence / arousal / energy /
-        engagement values without an API call.
+        The real Apollo API (POST /v1/models/apollo) requires two
+        separate recordings — a mood-question response and a read-aloud
+        passage, each ≥15s — and returns depression/anxiety disorder
+        scores. The kiosk's single complaint recording cannot satisfy
+        this, and Apollo's real output (PHQ-like severity) doesn't map
+        to the dashboard's valence/arousal/energy/engagement axes.
 
-        In production this is currently a no-op stub — Apollo's
-        recording requirements differ from Helios (per their docs it
-        needs two passages per run) and we haven't verified the live
-        endpoint contract for this codebase yet. Returning None
-        gracefully degrades the dashboard to "Apollo unavailable"
-        without blocking the rest of the pipeline.
+        In demo mode we return transcript-driven synthetic values so the
+        dashboard looks alive. In production we return None; the
+        dashboard gracefully hides the Apollo section.
         """
         if settings.demo_mode:
             return _demo_apollo_result(transcript)
         if not self.enabled:
             return None
-        # TODO: production Apollo wiring once endpoint contract is
-        # verified. Until then we surface no-op for live triage —
-        # Helios + Psyche carry the bias-detection signal.
-        log.info("apollo: live API not yet wired — returning None")
+        log.info("apollo: synthetic only (real API needs two recordings) — returning None")
         return None
 
     async def submit_psyche(
@@ -274,23 +279,23 @@ class ThymiaService:
         language: str = "en-US",
         transcript: str | None = None,
     ) -> PsycheResult | None:
-        """Run thymia Psyche (affect breakdown) on a recording.
+        """Return synthetic Psyche values (demo) or None (production).
 
-        In demo mode returns a transcript-driven dominant emotion +
-        confidence + distribution. The neutral-leaning fallback is
-        the affect signature of stoic / minimising patients ("I'm
-        fine, it's probably nothing") — clinically high-yield because
-        that's exactly when M.E.R.C.E.D. should escalate atypical
-        CVD presentations.
+        "Psyche" is not a thymia API product — the docs list Helios,
+        Apollo, and Sentinel only. The affect breakdown (dominant
+        emotion + 7-axis distribution) is a synthetic construct for
+        dashboard visualization.
 
-        In production this is currently a no-op stub for the same
-        reason as submit_apollo above.
+        In demo mode we return transcript-driven values. The neutral-
+        leaning fallback mimics stoic/minimising patients — clinically
+        high-yield because that's when M.E.R.C.E.D. should escalate.
+        In production we return None; the dashboard hides this section.
         """
         if settings.demo_mode:
             return _demo_psyche_result(transcript)
         if not self.enabled:
             return None
-        log.info("psyche: live API not yet wired — returning None")
+        log.info("psyche: no thymia API exists for this — returning None")
         return None
 
 

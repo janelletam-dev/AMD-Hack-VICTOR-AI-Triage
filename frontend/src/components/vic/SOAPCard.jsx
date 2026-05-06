@@ -62,11 +62,20 @@ export default function SOAPCard({ soap, vitals, demographics }) {
         </Section>
 
         <Section label="Objective">
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            {(vitals || DEFAULT_VITALS).map((v) => (
-              <Vital key={v.label} {...v} />
-            ))}
-          </div>
+          {/* Render SCRIBE's composed objective (biomarker readings + */}
+          {/* contextual notes) when present. Vital-sign tiles only show */}
+          {/* when the caller passes real `vitals` — never fabricate. */}
+          {vitals && vitals.length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {vitals.map((v) => (
+                <Vital key={v.label} {...v} />
+              ))}
+            </div>
+          ) : soap?.objective ? (
+            <p style={{ ...panelText, whiteSpace: "pre-wrap" }}>{soap.objective}</p>
+          ) : (
+            <p style={panelText}>{empty}</p>
+          )}
         </Section>
 
         <Section label="Plan">
@@ -92,9 +101,13 @@ function SubjectiveText({ text }) {
   if (!text) return <p style={panelText}>{empty}</p>;
   const capped = text.length > MAX_SUBJECTIVE_CHARS;
   const display = capped ? text.slice(0, MAX_SUBJECTIVE_CHARS) + "…" : text;
+  // pre-wrap preserves the `\n• …` bullets that SCRIBE composes in the
+  // backfill path; otherwise the HPI collapses into a single run-on line.
   return (
     <div>
-      <p style={{ ...panelText, maxHeight: 180, overflowY: "auto" }}>{display}</p>
+      <p style={{ ...panelText, maxHeight: 180, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+        {display}
+      </p>
       {capped && (
         <div style={{
           fontSize: 10, color: "var(--vic-on-surface-variant)",

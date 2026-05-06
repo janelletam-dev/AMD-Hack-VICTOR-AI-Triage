@@ -16,7 +16,7 @@ class Settings:
     # Thymia
     thymia_api_key: str = os.getenv("THYMIA_API_KEY", "")
     thymia_policy: str = os.getenv("THYMIA_POLICY", "demo_wellbeing_awareness")
-    thymia_biomarkers: str = os.getenv("THYMIA_BIOMARKERS", "helios,apollo")
+    thymia_biomarkers: str = os.getenv("THYMIA_BIOMARKERS", "helios")
 
     # LLM endpoint — OpenAI-compatible. Defaults point at local Ollama so the
     # swarm runs on a laptop while LoRA fine-tunes on MI300X. Swap to vLLM

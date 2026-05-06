@@ -122,7 +122,42 @@ export default function ClinicianDashboard() {
   const [sessionStatus, setSessionStatus] = useState(null);
   const [showDowngradeModal, setShowDowngradeModal] = useState(false);
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
+  // Epic push state. `pushing` = request in flight; `pushReceipt` carries
+  // doc_id + posted_at on success; `pushError` carries a message on
+  // failure. The EMR view also re-fetches the receipt by room_id when it
+  // mounts, so this state is just for the dashboard's confirmation toast.
+  const [pushing, setPushing] = useState(false);
+  const [pushReceipt, setPushReceipt] = useState(null);
+  const [pushError, setPushError] = useState(null);
   const timersRef = useRef([]);
+
+  const pushToEpic = useCallback(async () => {
+    setPushing(true);
+    setPushError(null);
+    try {
+      const httpBase = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
+      const r = await fetch(`${httpBase}/api/epic/push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room_id: activeRoom,
+          identity,
+        }),
+      });
+      if (!r.ok) {
+        throw new Error(`server returned ${r.status}`);
+      }
+      const data = await r.json();
+      setPushReceipt(data);
+      // Navigate to the Epic view, passing the receipt via state so the
+      // banner appears immediately without a re-fetch round-trip.
+      navigate("/clinician/epic", { state: { pushReceipt: data, room: activeRoom } });
+    } catch (e) {
+      setPushError(e.message || "Push failed");
+    } finally {
+      setPushing(false);
+    }
+  }, [activeRoom, identity, navigate]);
 
   const activeAgents = useMemo(() => {
     return new Set(
@@ -366,6 +401,12 @@ export default function ClinicianDashboard() {
               riskScores={riskScores}
             />
 
+            {/* Triage Priority — sits directly under the chart header so
+                clinicians see the queue position before drilling into
+                biomarkers. ESI standard vs V.I.C.T.O.R.-adjusted, with
+                time-to-bed implications per ENA triage guidelines. */}
+            <TriagePriorityCard esi={esi} flagQueue={flagQueue} />
+
             <BiomarkerCard data={biomarkers} unavailable={biomarkerUnavailable} />
 
             {/* Concordance Report — TrueVoice-style gap layout. Renders
@@ -388,11 +429,12 @@ export default function ClinicianDashboard() {
             <ActionFooter
               hasSoap={!!soap}
               triageComplete={triageComplete}
+              pushing={pushing}
               onApprove={() => {
                 if (!triageComplete) {
                   setShowApproveConfirm(true);
                 } else {
-                  navigate("/clinician/epic");
+                  pushToEpic();
                 }
               }}
               onDowngrade={() => setShowDowngradeModal(true)}
@@ -404,9 +446,21 @@ export default function ClinicianDashboard() {
               <ConfirmDialog
                 title="Triage is still in progress"
                 message="Approve current assessment? The patient interview has not completed."
-                onConfirm={() => { setShowApproveConfirm(false); navigate("/clinician/epic"); }}
+                onConfirm={() => { setShowApproveConfirm(false); pushToEpic(); }}
                 onCancel={() => setShowApproveConfirm(false)}
               />
+            )}
+
+            {pushError && (
+              <div style={{
+                padding: "12px 16px", borderRadius: 12,
+                background: "rgba(255, 100, 100, 0.08)",
+                border: "1px solid rgba(255, 100, 100, 0.30)",
+                color: "var(--vic-error)", fontSize: 13,
+              }}>
+                Push to Epic failed: {pushError}. Triage state is preserved
+                — try again, or navigate to the Epic workspace manually.
+              </div>
             )}
 
             {showDowngradeModal && (
@@ -433,7 +487,7 @@ export default function ClinicianDashboard() {
   );
 }
 
-function ActionFooter({ hasSoap, triageComplete, onApprove, onDowngrade, onRunDemo, running }) {
+function ActionFooter({ hasSoap, triageComplete, pushing, onApprove, onDowngrade, onRunDemo, running }) {
   // Hide the Run Demo button unless ?dev=1 is on the URL — judges shouldn't
   // see a "this is canned" tell during a live demo. Keeps the scripted
   // playback reachable as a worst-case fallback (visit /clinician?dev=1).
@@ -461,21 +515,22 @@ function ActionFooter({ hasSoap, triageComplete, onApprove, onDowngrade, onRunDe
       </div>
       <button
         onClick={onApprove}
-        disabled={!hasSoap}
+        disabled={!hasSoap || pushing}
         style={{
           padding: "14px 28px", borderRadius: 12, border: "none",
-          background: hasSoap
+          background: (hasSoap && !pushing)
             ? "linear-gradient(to right, var(--vic-primary), #008ea1)"
             : "var(--vic-bg-highest)",
-          color: hasSoap ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
+          color: (hasSoap && !pushing) ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
           fontFamily: "'Space Grotesk', sans-serif",
-          fontWeight: 700, fontSize: 15, cursor: hasSoap ? "pointer" : "not-allowed",
+          fontWeight: 700, fontSize: 15,
+          cursor: (hasSoap && !pushing) ? "pointer" : "not-allowed",
           letterSpacing: "-0.01em",
-          boxShadow: hasSoap ? "0 10px 30px rgba(47, 217, 244, 0.3)" : "none",
+          boxShadow: (hasSoap && !pushing) ? "0 10px 30px rgba(47, 217, 244, 0.3)" : "none",
           display: "flex", alignItems: "center", gap: 10,
         }}
       >
-        ☁ Approve &amp; Push to Epic (EHR)
+        {pushing ? "☁ Pushing to Epic…" : "☁ Approve & Push to Epic (EHR)"}
       </button>
     </footer>
   );
@@ -500,6 +555,160 @@ const HELIOS_DISPLAY = [
     concerningWhen: "low",
   },
 ];
+
+// Triage Priority — explains how V.I.C.T.O.R. is prioritizing this
+// patient against the rest of the waiting room. Surfaces the standard
+// ESI vs the V.I.C.T.O.R.-adjusted ESI side-by-side, the time-to-bed
+// implication for each level (per ENA/Beth Israel triage guidelines),
+// and the top concordance signal driving any adjustment. Renders a
+// neutral "Awaiting evidence" state pre-ESI so the slot is reserved
+// without showing fabricated levels.
+const ESI_LEVELS = {
+  1: { label: "Resuscitation", color: "var(--vic-error)",  ttb: "Immediate",  description: "Life-threatening — direct to resus bay." },
+  2: { label: "Emergent",      color: "#ff8a4a",            ttb: "<10 min",   description: "High-risk — bed within 10 minutes." },
+  3: { label: "Urgent",        color: "#ffd166",            ttb: "<30 min",   description: "Multiple resources expected; stable." },
+  4: { label: "Less Urgent",   color: "#7ddc91",            ttb: "<60 min",   description: "Single resource; can wait safely." },
+  5: { label: "Non-Urgent",    color: "#5fb6f0",            ttb: "<120 min",  description: "No resources expected; routine." },
+};
+
+function TriagePriorityCard({ esi, flagQueue }) {
+  const std = esi?.standard_esi;
+  const adj = esi?.victor_esi;
+  const reason = esi?.reason || esi?.adjustment_reason;
+  const topFlag = Array.isArray(flagQueue) && flagQueue.length ? flagQueue[0] : null;
+  const stdMeta = std && ESI_LEVELS[std];
+  const adjMeta = adj && ESI_LEVELS[adj];
+  const escalated = std && adj && adj < std;
+
+  const headerTone = escalated ? "var(--vic-error)" : adjMeta ? adjMeta.color : "rgba(47, 217, 244, 0.6)";
+  const border = escalated
+    ? "rgba(255, 100, 100, 0.30)"
+    : adjMeta
+    ? "rgba(47, 217, 244, 0.25)"
+    : "rgba(69, 70, 77, 0.25)";
+
+  return (
+    <section className="vic-glass" style={{
+      padding: 20, borderRadius: 16,
+      border: `1px solid ${border}`,
+      display: "flex", flexDirection: "column", gap: 14,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{
+            fontSize: 10, fontWeight: 700,
+            color: "rgba(47, 217, 244, 0.8)",
+            textTransform: "uppercase", letterSpacing: "0.2em",
+          }}>
+            Triage Priority · V.I.C.T.O.R.
+          </div>
+          <div style={{
+            fontSize: 14, color: "var(--vic-on-surface-variant)", marginTop: 4,
+          }}>
+            ESI 1–5 (Emergency Severity Index) · how this patient queues against the rest of the waiting room
+          </div>
+        </div>
+        {escalated && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: "0.2em",
+            color: headerTone, textTransform: "uppercase",
+            padding: "4px 10px", borderRadius: 999,
+            border: `1px solid ${headerTone}`,
+          }}>
+            Escalated
+          </span>
+        )}
+      </div>
+
+      {std || adj ? (
+        <div style={{
+          display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14,
+        }}>
+          <EsiTile heading="Standard ESI" level={std} meta={stdMeta} muted />
+          <EsiTile heading="V.I.C.T.O.R." level={adj} meta={adjMeta} highlight />
+        </div>
+      ) : (
+        <div style={{
+          fontSize: 13, color: "var(--vic-on-surface-variant)",
+          fontStyle: "italic", padding: "12px 14px",
+          background: "rgba(46, 52, 71, 0.3)", borderRadius: 10,
+        }}>
+          Awaiting evidence — score updates as V.I.C.T.O.R. weighs the chief complaint, biomarkers and concordance flags.
+        </div>
+      )}
+
+      {(reason || topFlag) && (
+        <div style={{
+          fontSize: 12, lineHeight: 1.55,
+          color: "var(--vic-on-surface-variant)",
+          padding: "10px 12px", borderRadius: 10,
+          background: "rgba(46, 52, 71, 0.4)",
+          borderLeft: `2px solid ${headerTone}`,
+        }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+            color: "rgba(47, 217, 244, 0.6)", letterSpacing: "0.18em",
+            textTransform: "uppercase", marginRight: 8,
+          }}>
+            Why
+          </span>
+          {reason
+            ? reason
+            : topFlag
+            ? `Tier ${topFlag.tier} concordance flag (${topFlag.triage_label || "atypical presentation"}) is influencing priority.`
+            : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function EsiTile({ heading, level, meta, muted, highlight }) {
+  const fg = meta ? meta.color : "var(--vic-on-surface-variant)";
+  return (
+    <div style={{
+      padding: 14, borderRadius: 12,
+      background: highlight ? "rgba(47, 217, 244, 0.06)" : "rgba(46, 52, 71, 0.3)",
+      border: `1px solid ${highlight ? "rgba(47, 217, 244, 0.25)" : "rgba(69, 70, 77, 0.2)"}`,
+      opacity: muted ? 0.85 : 1,
+    }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: "0.2em",
+        textTransform: "uppercase", color: "var(--vic-on-surface-variant)",
+        marginBottom: 6,
+      }}>
+        {heading}
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <span style={{
+          fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700,
+          fontSize: 32, color: fg, letterSpacing: "-0.02em",
+        }}>
+          {level || "—"}
+        </span>
+        {meta && (
+          <span style={{ fontSize: 13, color: "var(--vic-on-surface)" }}>
+            {meta.label}
+          </span>
+        )}
+      </div>
+      {meta && (
+        <div style={{
+          fontSize: 11, color: "var(--vic-on-surface-variant)",
+          marginTop: 6, lineHeight: 1.5,
+        }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace", color: fg,
+            marginRight: 6,
+          }}>
+            {meta.ttb}
+          </span>
+          · {meta.description}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Concordance Report — inspired by the TrueVoice gap-display pattern,
 // adapted to V.I.C.T.O.R.'s flag shape. Each flag becomes a "gap card"

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import TopNav from "../components/vic/TopNav.jsx";
 import {
@@ -30,6 +30,7 @@ import {
 } from "../state/sessionLogStore.js";
 
 const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
+const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
 
 function ageFromDOB(dob) {
   if (!dob) return null;
@@ -63,7 +64,25 @@ function mergedPatient(base, identity) {
 
 export default function EmrView() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeRoom] = useState("demo");
+  // Push receipt — populated either from navigation state (immediate path
+  // after the dashboard Approve button) or fetched from /api/epic/receipt
+  // on mount (so a deep link / hard refresh still shows the banner).
+  const [pushReceipt, setPushReceipt] = useState(location.state?.pushReceipt || null);
+  useEffect(() => {
+    if (pushReceipt) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${HTTP_BASE}/api/epic/receipt/${activeRoom}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!cancelled && data?.pushed) setPushReceipt(data);
+      } catch { /* network blip — banner stays hidden */ }
+    })();
+    return () => { cancelled = true; };
+  }, [activeRoom, pushReceipt]);
   const [theme, setTheme] = useState(
     () => localStorage.getItem("vic-emr-theme") || "dark"
   );
@@ -134,6 +153,9 @@ export default function EmrView() {
         minHeight: isDark ? "calc(100vh - 80px)" : "100vh",
       }}>
         {!isDark && <LightTitleBar />}
+        {pushReceipt && (
+          <PostedToEpicBanner receipt={pushReceipt} room={activeRoom} dark={isDark} />
+        )}
         <EpicPatientBanner patient={mergedPatient(DEMO_PATIENT, identity)} esi={esi} />
         <EpicTabs />
         <EpicToolbar onRunDemo={runDemo} running={running} />
@@ -211,6 +233,72 @@ function ThemeBtn({ active, onClick, dark, label, icon }) {
     >
       <span style={{ fontSize: 12 }}>{icon}</span>{label}
     </button>
+  );
+}
+
+// Banner shown above the chart once the dashboard's "Approve & Push to
+// Epic" has succeeded. Reads the doc_id + posted_at from the push
+// receipt and offers a one-click download of the underlying FHIR
+// bundle so a clinician auditor can inspect what was actually sent.
+function PostedToEpicBanner({ receipt, room, dark }) {
+  const posted = receipt?.posted_at
+    ? new Date(receipt.posted_at * 1000).toLocaleString()
+    : "—";
+  const docId = receipt?.doc_id || "—";
+  const summary = receipt?.summary || {};
+  const bundleUrl = `${HTTP_BASE}/api/epic/bundle/${room}`;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+      padding: "10px 16px",
+      background: dark ? "rgba(47, 217, 244, 0.08)" : "#dff5f7",
+      borderBottom: `1px solid ${dark ? "rgba(47, 217, 244, 0.30)" : "#9ad4dd"}`,
+      color: dark ? "var(--vic-on-surface)" : "#0e3e44",
+      fontSize: 13,
+    }}>
+      <span style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        fontWeight: 700, letterSpacing: "0.04em",
+      }}>
+        <span style={{ fontSize: 14 }}>☁</span>
+        Posted to Epic
+      </span>
+      <span style={{ opacity: 0.8 }}>{posted}</span>
+      <span style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+        padding: "3px 8px", borderRadius: 4,
+        background: dark ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.7)",
+        border: `1px solid ${dark ? "rgba(47, 217, 244, 0.20)" : "#9ad4dd"}`,
+      }}>
+        Doc ID · {docId}
+      </span>
+      {summary.esi_adjusted && (
+        <span style={{ opacity: 0.85 }}>
+          ESI {summary.esi_adjusted}
+          {summary.esi_standard && summary.esi_adjusted < summary.esi_standard
+            ? ` (escalated from ${summary.esi_standard})` : ""}
+        </span>
+      )}
+      {typeof summary.flags === "number" && summary.flags > 0 && (
+        <span style={{ opacity: 0.85 }}>{summary.flags} concordance flag{summary.flags === 1 ? "" : "s"}</span>
+      )}
+      <a
+        href={bundleUrl}
+        target="_blank"
+        rel="noreferrer"
+        style={{
+          marginLeft: "auto",
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+          textTransform: "uppercase", letterSpacing: "0.12em",
+          color: dark ? "var(--vic-primary)" : "#0e7c86",
+          textDecoration: "none",
+          padding: "5px 10px", borderRadius: 4,
+          border: `1px solid ${dark ? "rgba(47, 217, 244, 0.35)" : "#9ad4dd"}`,
+        }}
+      >
+        ↓ FHIR bundle
+      </a>
+    </div>
   );
 }
 

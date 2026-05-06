@@ -192,6 +192,9 @@ ELEMENTS: dict[str, list[str]] = {
         r"\b(ten\s+out\s+of\s+ten|worst\s+pain|worst\s+(it'?s?\s+)?ever)\b",
         r"\b(mild|moderate|severe|excruciating|unbearable)\b",
         r"\b(pretty\s+bad|really\s+bad|very\s+bad|not\s+(too\s+)?bad)\b",
+        r"\b(?:probably|maybe|like|about|around|say|sometimes)\s+(?:an?\s+)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        r"\b(?:it'?s|that'?s)\s+(?:a\s+)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        r"\b(hurts?\s+a\s+lot|really\s+hurts?|quite\s+painful|manageable|bearable|tolerable)\b",
     ],
     "quality": [
         r"\b(sharp|dull|burning|stabbing|crushing|pressure|tight(ness)?|"
@@ -214,7 +217,9 @@ ELEMENTS: dict[str, list[str]] = {
         r"short(ness)?\s+of\s+breath|sob|dizz\w*|lightheaded|"
         r"sweat\w*|diaphoretic|fatigue|cough\w*|swelling|swollen|"
         r"weakness|numb\w*|tingl\w*|blurred\s+vision|"
-        r"palpitations|racing\s+heart)\b",
+        r"palpitations|racing\s+heart|diarr?h[eo]?a|constipat\w*|"
+        r"urin\w+\s+(?:problems?|issues?|changes?)|"
+        r"loose\s+stools?|blood\s+in\s+(?:stool|urine))\b",
     ],
     "aggravating": [
         r"\b(worse\s+(when|with|after)|aggravat\w*|trigger\w*|"
@@ -230,8 +235,11 @@ ELEMENTS: dict[str, list[str]] = {
         # abd pain → biliary; sudden onset at rest → SAH or PE).
         r"\b(was|were)\s+(sitting|walking|running|exercising|climbing|"
         r"working|driving|sleeping|eating|lying|standing)\b",
-        r"\b(at\s+rest|during\s+exercise|after\s+(eating|a\s+meal)|"
+        r"\b(at\s+rest|during\s+exercise|after\s+(eating|a\s+meal|lunch|dinner|breakfast)|"
         r"when\s+(I|i)\s+\w+ed)\b",
+        r"\b(i'?ve\s+been|i\s+was\s+just|while)\s+(eating|sitting|walking|running|"
+        r"exercising|working|driving|sleeping|lying\s+down|standing|"
+        r"cooking|resting|relaxing)\b",
     ],
     "allergies": [
         r"\b(no\s+allerg\w*|allerg\w+\s+to|i'?m\s+allergic|"
@@ -248,7 +256,10 @@ ELEMENTS: dict[str, list[str]] = {
         r"heart\s+(disease|attack|condition|failure)|asthma|"
         r"copd|stroke|cancer|kidney\s+disease|liver\s+disease|"
         r"history\s+of|i\s+have\s+\w+|previously\s+had|"
-        r"diagnosed\s+with)\b",
+        r"diagnosed\s+with|"
+        r"had\s+this\s+before|never\s+had\s+this|first\s+time|"
+        r"happens?\s+(all\s+the\s+time|often|frequently|regularly)|"
+        r"this\s+has\s+happened\s+before)\b",
     ],
     "lmp": [
         r"\b(last\s+period|lmp|last\s+menstrual|menstrual\s+period|"
@@ -284,11 +295,16 @@ NEGATIVE_CONCEPTS: list[tuple[str, str]] = [
     ("cough",           r"cough\w*"),
     ("hemoptysis",      r"(?:blood\s+(?:in\s+)?(?:cough|sputum)|coughing\s+up\s+blood)"),
     ("hematemesis",     r"blood\s+in\s+(?:vomit|throw(?:ing)?\s+up)"),
-    ("blood in stool",  r"blood\s+in\s+stool"),
+    ("blood in stool",  r"blood\s+in\s+(?:my\s+)?(?:stool|poop)"),
     ("trauma",          r"(?:trauma|fall|fell|hit|injur\w*)"),
     ("LOC",             r"(?:loss\s+of\s+consciousness|loc|black(?:ed)?\s+out)"),
     ("anticoagulants",  r"(?:blood\s+thinner|anticoagulant|warfarin|eliquis|plavix)"),
-    ("prior episodes",  r"(?:had\s+this\s+before|similar\s+(?:before|episode)|like\s+this\s+before)"),
+    ("diarrhea",        r"diarr?h[eo]?e?a"),
+    ("constipation",    r"constipat\w*"),
+    ("urinary symptoms", r"(?:urin\w+|pee(?:ing)?|burn(?:ing)?\s+when\s+(?:I\s+)?(?:pee|urinat))"),
+    ("bowel changes",   r"(?:bowel\s+(?:change|movement|problem)|loose\s+stool)"),
+    ("prior episodes",  r"(?:had\s+this\s+before|similar\s+(?:before|episode)|like\s+this\s+before|"
+                        r"happens?\s+(?:all\s+the\s+time|often|frequently|before)|first\s+time)"),
     ("recent travel",   r"recent\s+travel"),
     ("leg swelling",    r"(?:leg\s+swelling|swollen\s+legs?|calf\s+pain)"),
     ("vision changes",  r"vision\s+(?:changes?|loss|problems?)"),

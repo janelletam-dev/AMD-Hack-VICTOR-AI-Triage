@@ -102,6 +102,10 @@ class ScribeAgent:
                 assessment=str(parsed.get("assessment") or self.note.assessment),
                 plan=plan or self.note.plan,
             )
+            # Even on a successful LLM response, ensure every section has
+            # *something* — small models occasionally omit fields, and a
+            # half-empty SOAP looks broken on the chart and the EPIC export.
+            self._backfill_empty_sections(context)
             return self.note
         except (LLMUnavailable, ValueError) as e:
             log.info("scribe fallback (LLM unavailable): %s", e)
@@ -183,48 +187,105 @@ class ScribeAgent:
     def _fallback_update(self, context: dict) -> SOAPNote:
         """Deterministic, template-based SOAP merge when the LLM is offline.
 
-        Builds the Subjective from the running transcript, the Objective from
-        biomarkers, the Assessment from the highest-tier flag, and a sane
-        default Plan when concordance has fired.
+        Delegates to `_backfill_empty_sections` so the offline path uses
+        exactly the same composition logic as the post-LLM cleanup.
+        """
+        self._backfill_empty_sections(context)
+        return self.note
+
+    def _backfill_empty_sections(self, context: dict) -> None:
+        """Ensure every SOAP section carries clinically meaningful content.
+
+        Runs after both the LLM and offline paths so the chart and the EPIC
+        export never expose a half-empty note. A small model that returns
+        only `{ "subjective": "..." }` would otherwise leave O/A/P blank.
         """
         transcript = str(context.get("transcript") or "").strip()
         biomarkers = context.get("biomarkers") or {}
         flags = context.get("flags") or []
         esi = context.get("esi") or {}
+        cc_text = str(context.get("chief_complaint_text") or "").strip()
+        cc_short = str(context.get("chief_complaint_short") or "").strip()
+        pert_negs = context.get("pertinent_negatives") or []
+        gender = context.get("gender")
+        age = context.get("age")
 
-        if transcript:
-            self.note.subjective = (
-                f"Patient reports: {transcript}"[:self.MAX_SUBJECTIVE_CHARS]
-            )
-        helios = biomarkers.get("helios") if isinstance(biomarkers, dict) else None
-        if isinstance(helios, dict) and helios:
-            parts = []
-            for k in ("stress", "distress", "mentalStrain", "exhaustion"):
-                if k in helios and isinstance(helios[k], (int, float)):
-                    parts.append(f"{k} {helios[k]:.2f}")
+        # ── S(ubjective) — HPI bullets from chief complaint + transcript ──
+        if not self.note.subjective.strip():
+            bullets: list[str] = []
+            if cc_short:
+                bullets.append(f"CC: {cc_short}")
+            elif cc_text:
+                bullets.append(f"CC: {cc_text[:120]}")
+            demo = []
+            if age is not None:
+                demo.append(f"{age}yo")
+            if gender:
+                demo.append(str(gender).lower())
+            if demo:
+                bullets.append("Demographics: " + " ".join(demo))
+            if transcript:
+                snippet = transcript[: self.MAX_SUBJECTIVE_CHARS - 32]
+                bullets.append(f"Patient narrative: {snippet}")
+            if pert_negs:
+                bullets.append("Denies: " + ", ".join(str(n) for n in pert_negs[:8]))
+            if not bullets:
+                bullets.append("Voice triage in progress; HPI pending.")
+            self.note.subjective = "\n".join(f"• {b}" for b in bullets)
+
+        # ── O(bjective) — voice biomarkers + context ──────────────────────
+        if not self.note.objective.strip():
+            helios = biomarkers.get("helios") if isinstance(biomarkers, dict) else None
+            parts: list[str] = []
+            if isinstance(helios, dict):
+                for k in ("stress", "distress", "mentalStrain", "exhaustion", "lowSelfEsteem"):
+                    v = helios.get(k)
+                    if isinstance(v, (int, float)):
+                        parts.append(f"{k} {v:.2f}")
+            obj_lines = ["Vitals: deferred to bedside reassessment."]
             if parts:
-                self.note.objective = "Helios — " + ", ".join(parts) + "."
+                obj_lines.append("Voice biomarkers (Helios) — " + ", ".join(parts) + ".")
+            else:
+                obj_lines.append("Voice biomarkers: capture in progress.")
+            obj_lines.append("Appearance: alert, conversant via kiosk.")
+            self.note.objective = "\n".join(obj_lines)
 
-        if flags:
-            top = sorted(flags, key=lambda f: f.get("tier", 99))[0]
-            label = top.get("triage_label") or top.get("trigger_phrase") or "concordance flag"
-            tier = top.get("tier")
-            self.note.assessment = (
-                f"Tier {tier} concordance flag: {label}. "
-                f"Atypical CVD presentation — recommend reassessment."
-            )
-            if not self.note.plan:
-                self.note.plan = [
-                    "Bedside 12-lead ECG",
-                    "Stat troponin",
-                    "Telemetry monitoring",
-                    "Cardiology consult if elevated",
-                ]
-
+        # ── A(ssessment) — flags / CC / ESI ───────────────────────────────
+        if not self.note.assessment.strip():
+            if flags:
+                top = sorted(flags, key=lambda f: f.get("tier", 99))[0]
+                label = top.get("triage_label") or top.get("trigger_phrase") or "concordance flag"
+                tier = top.get("tier")
+                self.note.assessment = (
+                    f"Tier {tier} concordance flag: {label}. "
+                    f"Atypical presentation — clinician reassessment recommended."
+                )
+            elif cc_short or cc_text:
+                anchor = cc_short or cc_text[:80]
+                self.note.assessment = (
+                    f"Working differential anchored on chief complaint: {anchor}. "
+                    f"Clinician evaluation pending."
+                )
+            else:
+                self.note.assessment = "Differential pending clinician evaluation."
         if esi:
             std = esi.get("standard")
             adj = esi.get("adjusted")
             if std and adj and adj < std and "ESI" not in self.note.assessment:
                 self.note.assessment += f" V.I.C.T.O.R. ESI {std} → {adj}."
 
-        return self.note
+        # ── P(lan) — flag-driven workup or default reassessment plan ──────
+        if not self.note.plan:
+            if flags:
+                self.note.plan = [
+                    "Bedside 12-lead ECG",
+                    "Stat troponin",
+                    "Telemetry monitoring",
+                    "Cardiology consult if elevated",
+                ]
+            else:
+                self.note.plan = [
+                    "Bedside vitals + clinician evaluation",
+                    "Targeted history and exam per chief complaint",
+                    "Reassess after focused workup",
+                ]

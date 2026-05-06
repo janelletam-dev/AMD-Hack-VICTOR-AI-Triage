@@ -188,24 +188,38 @@ export function EpicSOAPSection({ note }) {
         <span>SOAP Note · S.C.R.I.B.E.</span>
         <span className="meta">Draft — pending clinician cosign</span>
       </div>
-      {sections.map(([k, name, body]) => (
-        <div key={k} className="epic-row">
-          <div className="k">
-            <span style={{
-              display: "inline-block", width: 16, textAlign: "center", marginRight: 6,
-              background: "#e3f2f3", color: "#0e7c86", fontWeight: 700, borderRadius: 2,
-              fontFamily: "'JetBrains Mono',monospace",
-            }}>{k}</span>
-            {name}
+      {sections.map(([k, name, body]) => {
+        // Plan is an array of bullets; S/O/A may contain "\n• …" lines
+        // when SCRIBE composes a structured HPI. Render arrays as a real
+        // list and preserve newlines on string bodies via pre-wrap.
+        const isList = Array.isArray(body);
+        const hasContent = isList ? body.length > 0 : !!(body && String(body).trim());
+        return (
+          <div key={k} className="epic-row">
+            <div className="k">
+              <span style={{
+                display: "inline-block", width: 16, textAlign: "center", marginRight: 6,
+                background: "#e3f2f3", color: "#0e7c86", fontWeight: 700, borderRadius: 2,
+                fontFamily: "'JetBrains Mono',monospace",
+              }}>{k}</span>
+              {name}
+            </div>
+            <div className="v" style={{
+              color: hasContent ? "#1a2332" : "#4a5b75",
+              fontStyle: hasContent ? "normal" : "italic",
+              whiteSpace: isList ? "normal" : "pre-wrap",
+            }}>
+              {isList ? (
+                hasContent ? (
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {body.map((item, i) => <li key={i}>{item}</li>)}
+                  </ul>
+                ) : "—"
+              ) : (body || "—")}
+            </div>
           </div>
-          <div className="v" style={{
-            color: body ? "#1a2332" : "#4a5b75",
-            fontStyle: body ? "normal" : "italic"
-          }}>
-            {body || "—"}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { Clock, MessageCircle, Gauge, Flag, Venus, Mars } from "lucide-react";
 import VoiceSelector from "../components/VoiceSelector.jsx";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import { useAudioCapture } from "../hooks/useAudioCapture.js";
-import { setIdentity as setStoreIdentity, clearIdentity } from "../state/identityStore.js";
+import { setIdentity as setStoreIdentity, clearIdentity, useIdentity } from "../state/identityStore.js";
 
 const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
 const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
@@ -320,11 +320,7 @@ function isValidYMD(y, m, d) {
 }
 
 function formatYMD(y, m, d) {
-  const months = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-  ];
-  return `${months[m - 1]} ${d}, ${y}`;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 // Patterns for patient refusing DOB or giving age instead.
@@ -1919,8 +1915,15 @@ function Interview({
   const gotIt = processingState === "got_it";
   const { label: defaultLabel, title: defaultTitle } = phasePrompt(phase);
   const isConvo = phase === "conversation";
-  const label = isConvo && jackieTurn
-    ? `Question ${jackieTurn.turn} of ${jackieTurn.max_turns}`
+  // Conversation is "Step 6 of 6" — surface the underlying step on the
+  // left so patients reading "Question 2/5" don't misread it as "Step 2".
+  // ESI / Beth-Israel-style triage doesn't number follow-up questions on
+  // the patient's chrome, but our kiosk has a step counter, so make the
+  // relationship explicit: "Step 6 of 6 · Q2/5".
+  const label = isConvo
+    ? jackieTurn
+      ? `Step 6 of 6 · Q${jackieTurn.turn}/${jackieTurn.max_turns}`
+      : "Step 6 of 6"
     : defaultLabel;
   // When the editable confirm card is showing, the question title
   // ("And your date of birth?") is redundant with the card's own
@@ -2286,15 +2289,11 @@ function CommitButton({
   // a whole answer. Both share the disabled-while-busy display so the
   // patient sees the persona's status during model latency.
   if (phase === "complaint" || phase === "conversation") {
-    if (thinking || speaking) {
-      return (
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <button disabled style={primaryBtnStyle(false)}>
-            {thinking ? `${personaName} is thinking…` : `${personaName} is speaking…`}
-          </button>
-        </div>
-      );
-    }
+    // While thinking/speaking, the bottom StatusPill is the canonical
+    // "Victor is thinking…" indicator. Showing the same text on a
+    // disabled button here stacks two of them on screen. Suppress —
+    // the patient still gets the StatusPill + persona orb animation.
+    if (thinking || speaking) return null;
     const hasText = phase === "complaint" ? complaintHasText : conversationHasText;
     if (hasText) {
       return (
@@ -2315,15 +2314,9 @@ function CommitButton({
   }
 
   // ── IDENTITY PHASES (first_name, last_name, dob) ────────────────────
-  if (thinking || speaking) {
-    return (
-      <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-        <button disabled style={primaryBtnStyle(false)}>
-          {thinking ? `${personaName} is thinking…` : `${personaName} is speaking…`}
-        </button>
-      </div>
-    );
-  }
+  // Same de-dup as above — StatusPill carries the "thinking/speaking"
+  // copy, no need to repeat it on a disabled button.
+  if (thinking || speaking) return null;
 
   if (recording && hasCaptured) {
     return (
@@ -3183,7 +3176,30 @@ function ConfirmCard({ confirm, onYes, onRetry }) {
   );
 }
 
+// Strip disfluencies + repeats from a raw STT transcript so the patient's
+// "Reason for visit" reads cleanly on the thank-you screen while we wait
+// for SCRIBE's distilled chief_complaint_short. Conservative: only kills
+// fillers ("um", "uh", "like", "you know") and trims whitespace — does
+// not paraphrase, so clinical detail stays intact.
+function tidyComplaint(raw) {
+  if (!raw) return "";
+  let s = String(raw);
+  s = s.replace(/\b(?:uh+|um+|er+|ah+|hm+|mm+)\b[,.\s]*/gi, "");
+  s = s.replace(/\b(?:you know|i mean|like,|sort of|kind of)\b[,.\s]*/gi, "");
+  s = s.replace(/\s{2,}/g, " ").replace(/\s+([,.!?])/g, "$1").trim();
+  s = s.replace(/^[,.\s]+/, "").replace(/[,\s]+$/, "");
+  if (s) s = s[0].toUpperCase() + s.slice(1);
+  return s;
+}
+
 function Done({ room, answers = {} }) {
+  // Prefer SCRIBE's distilled chief_complaint_short ("Chest pain x 24h")
+  // over the verbatim. If SCRIBE hasn't responded yet, fall back to a
+  // locally-tidied version of the patient's raw transcript so the umms
+  // and ers don't show up on the chart-style summary.
+  const identity = useIdentity();
+  const distilled = identity?.chief_complaint_short || "";
+  const reason = distilled || tidyComplaint(answers.complaint);
   return (
     <div style={{ maxWidth: 600, width: "100%", textAlign: "center" }}>
       <div style={{
@@ -3204,7 +3220,7 @@ function Done({ room, answers = {} }) {
         to make sure we don't miss anything.
       </p>
 
-      {(answers.name || answers.dob || answers.complaint) && (
+      {(answers.name || answers.dob || reason) && (
         <div className="vic-glass" style={{
           textAlign: "left", padding: 24, borderRadius: 24,
           border: "1px solid rgba(69, 70, 77, 0.15)",
@@ -3212,7 +3228,7 @@ function Done({ room, answers = {} }) {
         }}>
           {answers.name && <SummaryRow label="Name" value={answers.name} />}
           {answers.dob && <SummaryRow label="Date of birth" value={answers.dob} />}
-          {answers.complaint && <SummaryRow label="Reason for visit" value={answers.complaint} />}
+          {reason && <SummaryRow label="Reason for visit" value={reason} />}
         </div>
       )}
 
