@@ -46,6 +46,10 @@ POLL_TIMEOUT_S = 90.0
 
 @dataclass
 class HeliosResult:
+    """Helios = thymia mental-wellness profile (stress / distress /
+    exhaustion / sleep / self-esteem / mental strain). The bias-
+    detection signal for V.I.C.T.O.R.: low_self_esteem is what flips
+    the under-triaged-women-in-CVD flag."""
     stress: float = 0.0
     distress: float = 0.0
     exhaustion: float = 0.0
@@ -55,7 +59,6 @@ class HeliosResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
     def to_event(self) -> dict[str, Any]:
-        """Shape used in the WS `biomarker` event sent to clinician views."""
         return {
             "helios": {
                 "stress": self.stress,
@@ -64,6 +67,56 @@ class HeliosResult:
                 "sleepPropensity": self.sleep_propensity,
                 "lowSelfEsteem": self.low_self_esteem,
                 "mentalStrain": self.mental_strain,
+            },
+        }
+
+
+@dataclass
+class ApolloResult:
+    """Apollo = thymia mood / energy profile. Continuous valence (positive
+    ↔ negative), arousal (calm ↔ activated), energy, engagement. Useful
+    on the dashboard for spotting flat affect (low arousal + low energy
+    + negative valence) which can correlate with depression and
+    minimisation patterns."""
+    valence: float = 0.5      # 0 = very negative, 1 = very positive
+    arousal: float = 0.5      # 0 = calm/flat, 1 = activated
+    energy: float = 0.5
+    engagement: float = 0.5
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def to_event(self) -> dict[str, Any]:
+        return {
+            "apollo": {
+                "valence": self.valence,
+                "arousal": self.arousal,
+                "energy": self.energy,
+                "engagement": self.engagement,
+            },
+        }
+
+
+@dataclass
+class PsycheResult:
+    """Psyche = thymia affect breakdown. Returns a dominant emotion
+    (joy / sadness / anger / fear / disgust / surprise / neutral) plus
+    a confidence and a full distribution. The discrete-emotion signal
+    is what populates the affect chip on the clinician dashboard.
+
+    Important triage note: a chest-pain patient whose Psyche reads
+    `dominant=fear` while their voice biomarkers (Helios) say "calm"
+    is a classic atypical CVD presentation — the affect leak that
+    M.E.R.C.E.D. picks up as concordance discrepancy."""
+    dominant: str = "neutral"
+    confidence: float = 0.0
+    distribution: dict[str, float] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def to_event(self) -> dict[str, Any]:
+        return {
+            "psyche": {
+                "dominant": self.dominant,
+                "confidence": self.confidence,
+                "distribution": self.distribution,
             },
         }
 
@@ -180,6 +233,66 @@ class ThymiaService:
             log.warning("helios poll timed out (run=%s, %.0fs)", run_id, elapsed)
             return None
 
+    async def submit_apollo(
+        self,
+        wav_bytes: bytes,
+        user_label: str,
+        date_of_birth: str | None = None,
+        birth_sex: str = "UNKNOWN",
+        language: str = "en-US",
+        transcript: str | None = None,
+    ) -> ApolloResult | None:
+        """Run thymia Apollo (mood / energy) on a recording.
+
+        In demo mode returns a transcript-aware scripted result so the
+        dashboard has live-looking valence / arousal / energy /
+        engagement values without an API call.
+
+        In production this is currently a no-op stub — Apollo's
+        recording requirements differ from Helios (per their docs it
+        needs two passages per run) and we haven't verified the live
+        endpoint contract for this codebase yet. Returning None
+        gracefully degrades the dashboard to "Apollo unavailable"
+        without blocking the rest of the pipeline.
+        """
+        if settings.demo_mode:
+            return _demo_apollo_result(transcript)
+        if not self.enabled:
+            return None
+        # TODO: production Apollo wiring once endpoint contract is
+        # verified. Until then we surface no-op for live triage —
+        # Helios + Psyche carry the bias-detection signal.
+        log.info("apollo: live API not yet wired — returning None")
+        return None
+
+    async def submit_psyche(
+        self,
+        wav_bytes: bytes,
+        user_label: str,
+        date_of_birth: str | None = None,
+        birth_sex: str = "UNKNOWN",
+        language: str = "en-US",
+        transcript: str | None = None,
+    ) -> PsycheResult | None:
+        """Run thymia Psyche (affect breakdown) on a recording.
+
+        In demo mode returns a transcript-driven dominant emotion +
+        confidence + distribution. The neutral-leaning fallback is
+        the affect signature of stoic / minimising patients ("I'm
+        fine, it's probably nothing") — clinically high-yield because
+        that's exactly when M.E.R.C.E.D. should escalate atypical
+        CVD presentations.
+
+        In production this is currently a no-op stub for the same
+        reason as submit_apollo above.
+        """
+        if settings.demo_mode:
+            return _demo_psyche_result(transcript)
+        if not self.enabled:
+            return None
+        log.info("psyche: live API not yet wired — returning None")
+        return None
+
 
 # Demo-mode biomarker generator. Starts at the canned "atypical CVD"
 # baseline (mirrors what the dashboard's scripted DEMO_EVENTS shows so
@@ -261,6 +374,144 @@ def _demo_helios_result(transcript: str | None) -> HeliosResult:
         low_self_esteem=scores["low_self_esteem"],
         mental_strain=scores["mental_strain"],
         raw={"demo_mode": True, "matched_keywords": sorted(set(matched))},
+    )
+
+
+# Apollo (mood/energy) — transcript-aware demo. Patient comes into
+# the ED → baseline valence skews negative (~0.35) and arousal varies
+# by complaint (acute → high arousal, chronic → low). Keywords push
+# axes from there.
+_APOLLO_BASELINE = {
+    "valence":    0.35,   # ED patients aren't happy by definition
+    "arousal":    0.50,
+    "energy":     0.55,
+    "engagement": 0.65,   # they came in, so they're engaged enough
+}
+
+_APOLLO_TRANSCRIPT_BUMPS: list[tuple[str, str, float]] = [
+    # Negative valence drivers
+    (r"\b(scared|terrified|afraid|worried|anxious|panic\w*)\b",        "valence",    -0.20),
+    (r"\b(sad|down|depress\w+|hopeless|miserable|crying)\b",            "valence",    -0.30),
+    (r"\b(angry|frustrated|fed\s+up|annoyed)\b",                         "valence",    -0.15),
+    (r"\b(don'?t\s+want\s+to\s+bother|probably\s+nothing|"
+     r"sorry\s+(for|to))\b",                                              "valence",    -0.10),
+    # Arousal drivers
+    (r"\b(can'?t\s+breathe|crushing|elephant|panic\w*|"
+     r"freaking\s+out)\b",                                                "arousal",    +0.30),
+    (r"\b(scared|terrified|afraid)\b",                                    "arousal",    +0.20),
+    (r"\b(exhaust\w+|drained|wiped\s+out|so\s+tired|"
+     r"barely|can\s+hardly)\b",                                           "arousal",    -0.25),
+    # Energy drivers
+    (r"\b(exhaust\w+|drained|wiped\s+out|no\s+energy|"
+     r"can\s+hardly\s+\w+)\b",                                            "energy",     -0.35),
+    (r"\b(tired|fatigu\w+|worn\s+out)\b",                                "energy",     -0.20),
+    # Engagement drivers (low when patient is dissociative or
+    # over-minimising — both correlate with poor history-taking quality)
+    (r"\b(don'?t\s+want\s+to\s+bother|probably\s+nothing|"
+     r"i'?m\s+fine|i\s+shouldn'?t\s+(?:have\s+come|be\s+here))\b",      "engagement", -0.25),
+    (r"\b(don'?t\s+remember|don'?t\s+know|i'?m\s+not\s+sure|"
+     r"i\s+can'?t\s+recall)\b",                                          "engagement", -0.15),
+]
+
+
+def _demo_apollo_result(transcript: str | None) -> ApolloResult:
+    """Compute a transcript-aware demo Apollo result. Same pattern as
+    _demo_helios_result: baseline + keyword-driven axis bumps, clipped
+    to [0.05, 0.95] so the gauges don't saturate at the extremes."""
+    scores = dict(_APOLLO_BASELINE)
+    if transcript:
+        for pattern, axis, bump in _APOLLO_TRANSCRIPT_BUMPS:
+            if re.search(pattern, transcript, re.IGNORECASE):
+                scores[axis] = max(0.05, min(0.95, scores[axis] + bump))
+    return ApolloResult(
+        valence=scores["valence"],
+        arousal=scores["arousal"],
+        energy=scores["energy"],
+        engagement=scores["engagement"],
+        raw={"demo_mode": True},
+    )
+
+
+# Psyche (affect breakdown) — transcript-driven dominant emotion.
+# Demo mode picks the most-keyword-supported emotion and assigns
+# a normalised distribution. Order matters slightly: a phrase that
+# matches both fear and sadness counts toward both, then we
+# normalise.
+_PSYCHE_EMOTION_KEYWORDS: dict[str, list[str]] = {
+    "fear": [
+        r"\b(scared|terrified|afraid|frightened|panic\w*|worried|"
+        r"freaking\s+out|can'?t\s+breathe|"
+        r"something'?s\s+(?:wrong|seriously\s+wrong))\b",
+    ],
+    "sadness": [
+        r"\b(sad|down|depress\w+|hopeless|crying|miserable|"
+        r"lonely|broken|defeated)\b",
+    ],
+    "anger": [
+        r"\b(angry|furious|pissed|mad|frustrated|fed\s+up|"
+        r"annoyed|sick\s+of)\b",
+    ],
+    "disgust": [
+        r"\b(disgust\w+|nauseous|gross|revolting|sick\s+to\s+my\s+stomach)\b",
+    ],
+    "surprise": [
+        r"\b(suddenly|out\s+of\s+nowhere|all\s+of\s+a\s+sudden|"
+        r"didn'?t\s+see\s+(?:it|that)\s+coming|came\s+on\s+fast)\b",
+    ],
+    "joy": [
+        r"\b(happy|glad|relieved|grateful|thank\s+you)\b",
+    ],
+}
+
+
+def _demo_psyche_result(transcript: str | None) -> PsycheResult:
+    """Compute a transcript-driven demo Psyche affect breakdown.
+    Counts keyword hits per emotion, normalises to a distribution,
+    picks the highest as dominant. Falls back to a neutral-leaning
+    "fear-suppressed" pattern when the transcript is sparse — that's
+    the typical baseline for stoic/minimising ED patients."""
+    counts: dict[str, int] = {emo: 0 for emo in _PSYCHE_EMOTION_KEYWORDS}
+    if transcript:
+        for emo, patterns in _PSYCHE_EMOTION_KEYWORDS.items():
+            for p in patterns:
+                if re.search(p, transcript, re.IGNORECASE):
+                    counts[emo] += 1
+    total = sum(counts.values())
+    if total == 0:
+        # Sparse transcript → neutral-dominant with mild fear undertone.
+        # This is the affect signature of stoic / minimising patients
+        # ("I'm fine, it's probably nothing") — clinically high-yield
+        # because it's exactly when M.E.R.C.E.D. should escalate.
+        distribution = {
+            "neutral":  0.55,
+            "fear":     0.20,
+            "sadness":  0.10,
+            "anger":    0.05,
+            "disgust":  0.05,
+            "surprise": 0.03,
+            "joy":      0.02,
+        }
+        return PsycheResult(
+            dominant="neutral",
+            confidence=0.55,
+            distribution=distribution,
+            raw={"demo_mode": True, "fallback": "stoic_baseline"},
+        )
+    # Normalise hit counts to a probability distribution. Reserve a
+    # small floor for "neutral" so a one-keyword utterance doesn't
+    # produce a 100%-confident dominant (that reads fake on the chart).
+    distribution: dict[str, float] = {emo: 0.0 for emo in _PSYCHE_EMOTION_KEYWORDS}
+    distribution["neutral"] = 0.0
+    for emo, c in counts.items():
+        distribution[emo] = c / total * 0.85
+    distribution["neutral"] = 0.15
+    dominant = max(distribution, key=distribution.get)
+    confidence = distribution[dominant]
+    return PsycheResult(
+        dominant=dominant,
+        confidence=round(confidence, 2),
+        distribution={k: round(v, 2) for k, v in distribution.items()},
+        raw={"demo_mode": True, "matched_counts": counts},
     )
 
 

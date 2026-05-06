@@ -32,7 +32,9 @@ from services.coverage_tracker import extract_covered, extract_negatives, priori
 from services.deepgram_service import DeepgramService, Transcript
 from services.event_bus import bus
 from services.thymia_service import (
+    ApolloResult,
     HeliosResult,
+    PsycheResult,
     ThymiaService,
     dob_to_iso,
     pcm16_to_wav,
@@ -647,16 +649,50 @@ async def audio_ws(
             return
 
         log.info(
-            "session=%s submitting %d frames (~%.1fs) to helios",
+            "session=%s submitting %d frames (~%.1fs) to thymia (helios+apollo+psyche)",
             session_id, len(pcm_chunks), len(pcm_chunks) * 0.04,
         )
-        result: HeliosResult | None = await thymia.submit_helios(
-            wav_bytes,
-            user_label=session_id,
-            date_of_birth=state["dob_iso"],
-            language=state["helios_lang"],
-            transcript=_full_patient_text(state),
+        # Fan out to all three thymia profiles in parallel. Helios is
+        # the primary (drives concordance gating); Apollo (mood/energy)
+        # and Psyche (affect breakdown) are surfaced on the dashboard
+        # for the clinician but don't gate the triage path.
+        full_text = _full_patient_text(state)
+        result, apollo_result, psyche_result = await asyncio.gather(
+            thymia.submit_helios(
+                wav_bytes,
+                user_label=session_id,
+                date_of_birth=state["dob_iso"],
+                language=state["helios_lang"],
+                transcript=full_text,
+            ),
+            thymia.submit_apollo(
+                wav_bytes,
+                user_label=session_id,
+                date_of_birth=state["dob_iso"],
+                language=state["helios_lang"],
+                transcript=full_text,
+            ),
+            thymia.submit_psyche(
+                wav_bytes,
+                user_label=session_id,
+                date_of_birth=state["dob_iso"],
+                language=state["helios_lang"],
+                transcript=full_text,
+            ),
+            return_exceptions=True,
         )
+        # Defensive: gather can return Exceptions if a coroutine raised.
+        # We only treat HeliosResult as load-bearing — Apollo/Psyche
+        # are progressive enhancement.
+        if isinstance(result, Exception):
+            log.exception("submit_helios raised", exc_info=result)
+            result = None
+        if isinstance(apollo_result, Exception):
+            log.warning("submit_apollo raised: %s", apollo_result)
+            apollo_result = None
+        if isinstance(psyche_result, Exception):
+            log.warning("submit_psyche raised: %s", psyche_result)
+            psyche_result = None
         if not result:
             # Thymia API timeout or error — continue triage without biomarkers.
             # Concordance engine skips biomarker gating, uses transcript-only.
@@ -685,6 +721,14 @@ async def audio_ws(
 
         event_data = result.to_event()
         helios_block = event_data.get("helios", {})
+        # Merge Apollo + Psyche blocks into the same biomarker event so
+        # the clinician dashboard receives one consolidated update with
+        # all three thymia profiles. Concordance gating still keys off
+        # Helios only — Apollo/Psyche are progressive enhancement.
+        if apollo_result is not None:
+            event_data.update(apollo_result.to_event())
+        if psyche_result is not None:
+            event_data.update(psyche_result.to_event())
 
         # Detect Thymia silent failure: all biomarker values are 0.0.
         if concordance_engine.biomarkers_all_zero({"helios": helios_block}):
@@ -758,12 +802,41 @@ async def audio_ws(
             )
 
             wav_bytes = pcm16_to_wav(b"".join(pcm_chunks), settings.sample_rate_hz)
-            result: HeliosResult | None = await thymia.submit_helios(
-                wav_bytes,
-                user_label=session_id,
-                date_of_birth=state["dob_iso"],
-                language=state["helios_lang"],
+            full_text = _full_patient_text(state)
+            # Same parallel fan-out on refresh — keep all three profiles
+            # in sync so the dashboard never shows stale Apollo/Psyche
+            # next to refreshed Helios.
+            result, apollo_result, psyche_result = await asyncio.gather(
+                thymia.submit_helios(
+                    wav_bytes,
+                    user_label=session_id,
+                    date_of_birth=state["dob_iso"],
+                    language=state["helios_lang"],
+                    transcript=full_text,
+                ),
+                thymia.submit_apollo(
+                    wav_bytes,
+                    user_label=session_id,
+                    date_of_birth=state["dob_iso"],
+                    language=state["helios_lang"],
+                    transcript=full_text,
+                ),
+                thymia.submit_psyche(
+                    wav_bytes,
+                    user_label=session_id,
+                    date_of_birth=state["dob_iso"],
+                    language=state["helios_lang"],
+                    transcript=full_text,
+                ),
+                return_exceptions=True,
             )
+            if isinstance(result, Exception):
+                log.exception("submit_helios refresh raised", exc_info=result)
+                result = None
+            if isinstance(apollo_result, Exception):
+                apollo_result = None
+            if isinstance(psyche_result, Exception):
+                psyche_result = None
             if not result:
                 log.warning("session=%s helios refresh returned no result — keeping prior values", session_id)
                 return
@@ -774,6 +847,11 @@ async def audio_ws(
                 log.warning("session=%s helios refresh returned all-zero — keeping prior values", session_id)
                 return
 
+            # Merge Apollo + Psyche blocks into the refresh event too.
+            if apollo_result is not None:
+                event_data.update(apollo_result.to_event())
+            if psyche_result is not None:
+                event_data.update(psyche_result.to_event())
             # Tag as refreshed so the dashboard can display "refined" if it cares.
             event_data["refresh"] = True
             event_data["pass"] = state["helios_submit_count"] + 1

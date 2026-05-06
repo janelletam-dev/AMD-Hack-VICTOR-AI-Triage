@@ -11,8 +11,19 @@ Built for the AMD Developer Hackathon (May 4–10, 2026).
 Three parallel signals from one voice input:
 
 1. **What the patient says** → Deepgram Flux Multilingual (transcript)
-2. **How they say it** → Thymia Helios + Apollo (voice biomarkers)
+2. **How they say it** → Thymia voice biomarkers (three profiles in parallel — see table below)
 3. **What doesn't add up** → Concordance Engine + 5-Agent Swarm (bias-aware triage)
+
+| Stage                              | Service                       | Target latency  |
+| ---------------------------------- | ----------------------------- | --------------- |
+| Medical transcription              | Deepgram Flux v2 multilingual | ~200 ms         |
+| Distress / stress score            | thymia **Helios**             | per utterance   |
+| Mood / energy score                | thymia **Apollo**             | per utterance   |
+| Affect breakdown                   | thymia **Psyche**             | per utterance   |
+| Concordance / bias-detection gloss | M.E.R.C.E.D. on llama3.1:8b   | < 1 s           |
+| End-of-consult evidence report     | E.L.M.E.R. on llama3.1:8b     | on demand       |
+
+> **Demo-mode note:** when `DEMO_MODE=true`, all three thymia profiles are produced by transcript-aware scripted helpers in `services/thymia_service.py` — Helios uses real API in production, Apollo + Psyche have stub no-op live wiring pending endpoint verification.
 
 5-agent swarm on Llama 3 8B / vLLM / AMD MI300X:
 
@@ -36,10 +47,13 @@ subscribes to.
 flowchart LR
     Mic([🎤 Patient mic<br/>16 kHz PCM16]) --> WS[/ws/audio<br/>FastAPI/]
     WS -->|frames| DG[Deepgram Flux v2<br/>STT]
-    WS -->|WAV| TH[Thymia Helios<br/>voice biomarkers]
+    WS -->|WAV| TH[thymia · 3 profiles<br/>Helios + Apollo + Psyche<br/>parallel fan-out]
+    TH -->|stress / distress<br/>exhaustion / sleep / strain| HE[Helios block]
+    TH -->|valence / arousal<br/>energy / engagement| AP[Apollo block]
+    TH -->|dominant emotion<br/>+ distribution| PS[Psyche block]
     DG -->|finals| COV[Coverage Tracker<br/>OPQRST + NegEx]
     DG -->|finals| CONC[Concordance Engine]
-    TH -->|biomarkers| CONC
+    HE -->|biomarkers| CONC
     CONC -->|flags| MERCED
     DG -->|finals| RISK[Clinical Risk Scores<br/>HEART · Wells · Alvarado]
     DG -->|complaint+turns| JACKIE
@@ -50,6 +64,9 @@ flowchart LR
     MERCED --> BUS
     SCRIBE --> BUS
     RISK --> BUS
+    HE --> BUS
+    AP --> BUS
+    PS --> BUS
     BUS[(EventBus<br/>per-room pub/sub)] --> DASH[/ws/events<br/>Clinician dashboard/]
     BUS --> EMR[Epic-style EMR view]
 ```

@@ -150,7 +150,7 @@ export default function ClinicianDashboard() {
       const h = data?.helios || {};
       if (ts) setLogs(prev => [...prev.slice(-50), {
         ts, color: "var(--vic-secondary)",
-        text: `THYMIA Helios: stress ${(h.stress ?? 0).toFixed(2)} · distress ${(h.distress ?? 0).toFixed(2)} · mental strain ${(h.mentalStrain ?? 0).toFixed(2)}`,
+        text: `THYMIA Helios: stress ${(h.stress ?? 0).toFixed(2)} · distress ${(h.distress ?? 0).toFixed(2)} · mental strain ${(h.mentalStrain ?? 0).toFixed(2)}${data?.apollo ? ` | Apollo: valence ${(data.apollo.valence ?? 0).toFixed(2)} · energy ${(data.apollo.energy ?? 0).toFixed(2)}` : ""}${data?.psyche?.dominant ? ` | Psyche: ${data.psyche.dominant} ${Math.round((data.psyche.confidence ?? 0) * 100)}%` : ""}`,
       }]);
     } else if (type === "biomarker_unavailable") {
       setBiomarkerUnavailable(true);
@@ -495,6 +495,8 @@ const HELIOS_DISPLAY = [
 
 function BiomarkerCard({ data, unavailable }) {
   const h = data?.helios || {};
+  const a = data?.apollo || null;
+  const p = data?.psyche || null;
   const hasAny = HELIOS_DISPLAY.some((f) => typeof h[f.key] === "number");
   // All zeros from Thymia = silent failure. Show unavailable message.
   const allZeros = hasAny && HELIOS_DISPLAY.every((f) => (h[f.key] || 0) === 0);
@@ -502,21 +504,21 @@ function BiomarkerCard({ data, unavailable }) {
     <section className="vic-glass" style={{
       padding: 20, borderRadius: 16,
       border: `1px solid ${unavailable || allZeros ? "rgba(255, 185, 95, 0.25)" : "rgba(47, 217, 244, 0.15)"}`,
-      display: "flex", flexDirection: "column", gap: 12,
+      display: "flex", flexDirection: "column", gap: 14,
     }}>
       <div style={{
         fontSize: 10, fontWeight: 700,
         color: unavailable || allZeros ? "rgba(255, 185, 95, 0.8)" : "rgba(47, 217, 244, 0.8)",
         textTransform: "uppercase", letterSpacing: "0.2em",
       }}>
-        Voice Biomarkers · thymia Helios
+        Voice Biomarkers · thymia
       </div>
       <div style={{
-        fontSize: 9, fontWeight: 500, marginTop: -8,
+        fontSize: 9, fontWeight: 500, marginTop: -10,
         color: "var(--vic-on-surface-variant)", opacity: 0.6,
         fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
       }}>
-        Acoustic biomarker analysis · ≥15s validated
+        Acoustic biomarker analysis · ≥15s validated · Helios + Apollo + Psyche
       </div>
       {unavailable || allZeros ? (
         <div style={{
@@ -536,30 +538,137 @@ function BiomarkerCard({ data, unavailable }) {
           Awaiting voice sample…
         </div>
       ) : (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 14,
-        }}>
-          {HELIOS_DISPLAY.map((f) => {
-            const raw = typeof h[f.key] === "number" ? h[f.key] : 0;
-            const display = f.transform ? f.transform(raw) : raw;
-            const concernCutoffHigh = f.key === "exhaustion" ? 0.33 : 0.66;
-            const concerning = f.concerningWhen === "high"
-              ? display >= concernCutoffHigh
-              : display <= 0.34;
-            return (
-              <BiomarkerBar
-                key={f.key}
-                label={f.label}
-                value={display}
-                concerning={concerning}
-              />
-            );
-          })}
-        </div>
+        <>
+          {/* Helios: stress / distress / exhaustion / strain — the primary
+              concordance-gating profile. Drives M.E.R.C.E.D.'s flag firing. */}
+          <ProfileSection title="Helios · mental wellness" subtitle="distress / stress / exhaustion / sleep / strain">
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: 14,
+            }}>
+              {HELIOS_DISPLAY.map((f) => {
+                const raw = typeof h[f.key] === "number" ? h[f.key] : 0;
+                const display = f.transform ? f.transform(raw) : raw;
+                const concernCutoffHigh = f.key === "exhaustion" ? 0.33 : 0.66;
+                const concerning = f.concerningWhen === "high"
+                  ? display >= concernCutoffHigh
+                  : display <= 0.34;
+                return (
+                  <BiomarkerBar
+                    key={f.key}
+                    label={f.label}
+                    value={display}
+                    concerning={concerning}
+                  />
+                );
+              })}
+            </div>
+          </ProfileSection>
+
+          {/* Apollo: valence / arousal / energy / engagement.
+              Surfaced for clinical insight (flat affect = depression
+              + minimisation pattern) but doesn't gate triage. */}
+          {a && (
+            <ProfileSection title="Apollo · mood + energy" subtitle="valence / arousal / energy / engagement">
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 14,
+              }}>
+                <BiomarkerBar label="Valence (positive ↔ negative)" value={1 - (a.valence ?? 0.5)} concerning={a.valence < 0.3} />
+                <BiomarkerBar label="Arousal" value={a.arousal ?? 0.5} concerning={(a.arousal ?? 0.5) >= 0.8 || (a.arousal ?? 0.5) <= 0.2} />
+                <BiomarkerBar label="Energy" value={a.energy ?? 0.5} concerning={(a.energy ?? 0.5) <= 0.3} />
+                <BiomarkerBar label="Engagement" value={a.engagement ?? 0.5} concerning={(a.engagement ?? 0.5) <= 0.4} />
+              </div>
+            </ProfileSection>
+          )}
+
+          {/* Psyche: dominant affect with full distribution.
+              The discrete-emotion signal — fear+suppression (low
+              confidence, neutral dominant) is the atypical-CVD
+              red flag M.E.R.C.E.D. picks up. */}
+          {p && (
+            <ProfileSection title="Psyche · affect breakdown" subtitle="dominant emotion + distribution">
+              <PsycheChips dominant={p.dominant} confidence={p.confidence} distribution={p.distribution} />
+            </ProfileSection>
+          )}
+        </>
       )}
     </section>
+  );
+}
+
+function ProfileSection({ title, subtitle, children }) {
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", gap: 10,
+      paddingTop: 4,
+    }}>
+      <div style={{
+        display: "flex", alignItems: "baseline", gap: 10,
+        flexWrap: "wrap",
+      }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700,
+          color: "rgba(47, 217, 244, 0.85)",
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: "0.18em", textTransform: "uppercase",
+        }}>{title}</span>
+        <span style={{
+          fontSize: 9,
+          color: "var(--vic-on-surface-variant)",
+          opacity: 0.55,
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: "0.04em",
+        }}>{subtitle}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function PsycheChips({ dominant, confidence, distribution }) {
+  const dist = distribution || {};
+  // Sort emotions by weight descending so the chart reads as
+  // "dominant first" — matches how clinicians scan a chart.
+  const entries = Object.entries(dist).sort((x, y) => y[1] - x[1]);
+  const emoColors = {
+    fear:     "#ff6b6b",
+    sadness:  "#7aa6e8",
+    anger:    "#ff9f6b",
+    disgust:  "#a07ae8",
+    surprise: "#ffd76b",
+    joy:      "#7ae8a4",
+    neutral:  "rgba(200, 200, 200, 0.7)",
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{
+        fontSize: 14, fontWeight: 600,
+        color: emoColors[dominant] || "var(--vic-on-surface)",
+      }}>
+        {dominant} <span style={{
+          fontSize: 11, opacity: 0.7,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>· {Math.round((confidence ?? 0) * 100)}% confidence</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {entries.map(([emo, weight]) => (
+          <span key={emo} style={{
+            fontSize: 11, padding: "3px 9px",
+            borderRadius: 999,
+            border: `1px solid ${emoColors[emo] || "rgba(255,255,255,0.1)"}`,
+            color: emoColors[emo] || "var(--vic-on-surface-variant)",
+            opacity: weight > 0.05 ? 1 : 0.4,
+            fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: "0.04em",
+          }}>
+            {emo} {Math.round(weight * 100)}%
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
