@@ -458,6 +458,43 @@ intended-use scope, known failure modes, and refresh cadence.
 
 ---
 
+## Clinical advisory — open call
+
+V.I.C.T.O.R.'s clinical lead is the founder, [Janelle Tamayo, RN](https://huggingface.co/jantam13).
+Bedside experience drives the product decisions: Bates' HPI structure
+in SCRIBE, OPQRST/SAMPLE coverage discipline in JACKIE, sex-at-birth
+(not gender) in the kiosk, distilled-CC headers matching Epic 2018+
+chart layout, the per-complaint can't-miss red-flag tables. Clinical
+realism is the foundation, not a bolt-on.
+
+For V2, V.I.C.T.O.R. is actively seeking external clinical advisors:
+
+- **Emergency Medicine physicians** — to review the concordance-flag
+  framing as clinical decision support, sanity-check the under-triage
+  scenarios, and shape the prospective-validation study design.
+- **Cardiology fellows / attendings** — to validate the atypical-CVD
+  presentation patterns drawn from the MIMIC-IV BigQuery analysis
+  against their own institution's experience.
+- **Biomedical informatics / clinical-AI researchers** — to co-design
+  the prospective study against MIMIC-IV-ED triage notes with
+  confirmed outcomes (the V2 specificity validation named in the
+  Concordance engine section above).
+- **ED triage nurses** — to pressure-test the JACKIE conversation
+  flow, the coverage tracker priorities, and the kiosk affordances
+  in actual waiting-room ergonomics.
+
+The product's clinical claims are honest about what is grounded
+(MIMIC-IV-derived patterns, peer-reviewed voice biomarker literature,
+ENA-aligned ESI / Bates' HPI / OPQRST) and what is novel synthesis
+(verbal-acoustic concordance as a high-specificity under-triage
+signal). External advisors would help close the gap from "defensible
+synthesis" to "validated clinical decision support."
+
+Reach out via the [HuggingFace profile](https://huggingface.co/jantam13)
+or the AMD Developer Hackathon channel.
+
+---
+
 ## License
 
 MIT.
