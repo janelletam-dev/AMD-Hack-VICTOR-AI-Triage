@@ -73,6 +73,10 @@ export default function ClinicianDashboard() {
         text: `DEEPGRAM: "${data.text}"`,
       }]);
     } else if (type === "biomarker") {
+      // Reset the "unavailable" sticky state — a fresh biomarker event
+      // means Thymia (or DEMO_MODE) succeeded this round, supersedes any
+      // earlier 403/timeout banner.
+      setBiomarkerUnavailable(false);
       setBiomarkers(data);
       logBiomarkers(data);
       const h = data?.helios || {};
@@ -431,6 +435,13 @@ function BiomarkerCard({ data, unavailable }) {
         textTransform: "uppercase", letterSpacing: "0.2em",
       }}>
         Voice Biomarkers · thymia Helios
+      </div>
+      <div style={{
+        fontSize: 9, fontWeight: 500, marginTop: -8,
+        color: "var(--vic-on-surface-variant)", opacity: 0.6,
+        fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
+      }}>
+        15s voice sample · mental wellness model
       </div>
       {unavailable || allZeros ? (
         <div style={{

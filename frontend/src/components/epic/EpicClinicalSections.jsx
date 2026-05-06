@@ -124,7 +124,7 @@ export function EpicBiomarkersSection({ data }) {
     <div className="epic-section">
       <div className="epic-band">
         <span>Voice Biomarkers · Thymia Helios</span>
-        <span className="meta">Captured from chief-complaint utterance</span>
+        <span className="meta">15s voice sample · captured from chief-complaint utterance</span>
       </div>
       {!data ? (
         <div style={{ padding: "8px 10px", color: "#4a5b75", fontStyle: "italic" }}>
