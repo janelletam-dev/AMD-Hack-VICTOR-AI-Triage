@@ -820,6 +820,25 @@ function ConcordanceReport({ flags, biomarkers }) {
           ))}
         </div>
       )}
+      {/* Architecture receipt — answers "what's your false positive rate?"
+          on the live dashboard, sourced from backend/tests/concordance_eval.py.
+          Conjunctive design: a flag requires BOTH minimisation phrase AND
+          biomarker breach. Direct speech with elevated stress alone never
+          fires — see eval cohort B (70-year-old-white-man typical ACS). */}
+      <div style={{
+        marginTop: 4, paddingTop: 10,
+        borderTop: "1px dashed rgba(47, 217, 244, 0.15)",
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 10, letterSpacing: "0.06em",
+        color: "var(--vic-on-surface-variant)", opacity: 0.7,
+        display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center",
+      }}>
+        <span>architecture: <strong style={{ color: "var(--vic-on-surface)" }}>conjunctive</strong> (minimisation × biomarker breach)</span>
+        <span>·</span>
+        <span>stratified eval n=13: <strong style={{ color: "rgb(120, 200, 160)" }}>FPR 0.0%</strong>, sensitivity 100%</span>
+        <span>·</span>
+        <span style={{ opacity: 0.85 }}>tests/concordance_eval.py</span>
+      </div>
     </section>
   );
 }

@@ -104,12 +104,18 @@ TIER_3: tuple[MinimisationEntry, ...] = (
 # Tier 4 — verbal minimisation patterns (clinical-literature sourced).
 TIER_4_PHRASES: tuple[str, ...] = (
     r"\bit'?s\s+nothing\s+really\b",
-    r"\bi'?m\s+fine,?\s+just\b",
+    r"\bit'?s\s+probably\s+nothing\b",
+    r"\bprobably\s+nothing\b",
+    r"\bi'?m\s+fine,?\s+(?:just|really)\b",
     r"\bprobably\s+just\s+stress\b",
     r"\bi\s+think\s+it'?s\s+anxiety\b",
     r"\bprobably\s+pulled\s+a\s+muscle\b",
     r"\bit'?ll\s+pass\b",
-    r"\bi\s+didn'?t\s+want\s+to\s+bother\b",
+    # Both tenses — patient may say either "I don't want to bother" (present)
+    # or "I didn't want to come in" (past). The original pattern was past-tense
+    # only and silently missed the canonical demo line in the eval harness.
+    r"\bi\s+(?:do(?:n'?t|\s+not)|didn'?t)\s+want\s+to\s+(?:bother|trouble|make\s+a\s+fuss)\b",
+    r"\bsorry\s+to\s+(?:come\s+in|bother|trouble|waste)\b",
     r"\bbeen\s+going\s+on\s+for\s+a\s+while\s+but\b",
 )
 

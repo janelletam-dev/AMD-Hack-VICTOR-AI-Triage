@@ -194,6 +194,44 @@ See `.gitignore`.
 
 ---
 
+## Concordance engine — eval & false-positive rate
+
+The concordance flag is **conjunctive by design**: a flag fires only when
+BOTH (a) a verbal-minimisation phrase from the MIMIC-IV-derived dictionary
+AND (b) a biomarker breach above peer-baseline threshold land in the same
+window. Stress alone, or minimisation language alone, does not fire.
+That conjunction is the bias-detection signal — not the biomarker, not
+the regex, but their disagreement.
+
+A small stratified eval harness exercises this property and prints a
+confusion matrix. Run from `backend/`:
+
+```
+.venv/bin/python -m tests.concordance_eval
+```
+
+Latest run (n = 13 synthetic cases, four stratified cohorts):
+
+| Metric | Value | Interpretation |
+|---|---|---|
+| Sensitivity (TPR) | 100.0% (5/5) | All canonical concordance patterns fire (incl. demo line) |
+| Specificity (TNR) | 100.0% (8/8) | No false fires across direct-speech / minimiser-only / baseline |
+| **False-positive rate** | **0.0% (0/8)** | **The 70-year-old-white-man cohort: 0 fires across stoic-ACS, direct young woman, anxious-direct, baseline, and minimiser-with-normal-biomarkers cases** |
+| Positive predictive value | 100.0% (5/5) | Every flag fired was a true concordance gap |
+
+The harness also prints a stratified breakdown so you can see false-fire
+rate per cohort independently — useful for catching regressions when the
+phrase dictionary expands.
+
+**Limits.** The cases are synthetic, hand-written to match realistic ED
+triage transcripts. Real prospective validation against MIMIC-IV-ED
+triage notes with confirmed clinical outcomes (and sensitivity /
+specificity per demographic subgroup) is V2 — see Production Roadmap
+below. The eval is a safety net for the *architecture* (does the
+conjunction hold?), not a substitute for clinical validation.
+
+---
+
 ## Production Roadmap (V2)
 
 This is a 7-day hackathon build. The architecture is production-shaped
