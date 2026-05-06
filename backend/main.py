@@ -30,6 +30,27 @@ logging.basicConfig(
 )
 log = logging.getLogger("victor")
 
+# Refuse to boot in production with demo-mode flags on. DEMO_MODE generates
+# scripted Helios biomarkers and synthetic Apollo/Psyche values — emitting
+# those alongside live patient data would constitute fabricated clinical
+# signal and is disallowed by design. The check fires loudly so a misconfig
+# at deploy time fails fast instead of silently triaging real patients with
+# canned numbers. Override only if you have an explicit safety reason and
+# know what you are doing — there shouldn't be one.
+if settings.demo_mode and settings.node_env == "production":
+    raise RuntimeError(
+        "REFUSING TO START: DEMO_MODE=true is set with NODE_ENV=production. "
+        "Demo mode generates scripted biomarkers; running it against live "
+        "patient audio would constitute fabricated clinical data. Unset "
+        "DEMO_MODE in the production environment, or set NODE_ENV to a "
+        "non-production value (e.g. 'staging') if this is intentional."
+    )
+if settings.demo_mode:
+    log.warning(
+        "DEMO_MODE is ON — Helios biomarkers are scripted, Apollo/Psyche are "
+        "synthetic. Do NOT use this configuration with real patient audio."
+    )
+
 app = FastAPI(
     title="V.I.C.T.O.R.",
     description="Voice-first AI triage agent — backend.",

@@ -194,6 +194,38 @@ See `.gitignore`.
 
 ---
 
+## Production Roadmap (V2)
+
+This is a 7-day hackathon build. The architecture is production-shaped
+— deterministic LLM fallbacks, server-authoritative session log,
+FHIR R4 push surface, env-var-driven CORS, no wildcard origins — but
+the operational hardening is V2. We name the gaps explicitly here so
+they're auditable rather than hidden:
+
+| Area | Hackathon state | V2 plan |
+|---|---|---|
+| **AuthN / AuthZ** | None on `/api/*` endpoints | Header-based API key for service-to-service, OAuth2 + per-clinician identity for human callers, SMART-on-FHIR for the Epic push |
+| **Rate limiting** | None | `slowapi` on `/api/*` (10 req/min/IP), Cloudflare in front for L7 abuse |
+| **WebSocket auth** | Open per-room | Signed room tokens (HMAC, 60-min expiry), origin pinning, per-room nonce |
+| **Session log persistence** | In-memory dict; uvicorn restart wipes | Redis with TTL for live state, durable audit trail to S3 with KMS encryption |
+| **PHI in app logs** | Transcript text at INFO | Structured logger with redaction; transcripts at DEBUG only; rotation + ship to SIEM |
+| **Demo-mode safety** | `DEMO_MODE=true` env toggle | Startup assertion refuses to boot with `DEMO_MODE=true` and `NODE_ENV=production` together (shipped — see `main.py`) |
+| **Secrets management** | `.env` file, gitignored | Doppler / AWS Secrets Manager / DO Vault; rotation every 90 days |
+| **HIPAA BAA** | Out of scope for hackathon | Required before any real PHI: BAAs with Anthropic, Deepgram, ElevenLabs, thymia, hosting; PHI-grade encryption at rest + in transit |
+| **Clinical validation** | MIMIC-IV-derived rules + LoRA fine-tune | Prospective study at a partner ED; clinician co-author; IRB; FDA CDS Software guidance review (clinician retains independent review of basis) |
+| **Observability** | Stdout logs + `/health/full` | OpenTelemetry traces, Prometheus metrics, Sentry for errors, paged alerts on agent-fallback rate spikes |
+| **Disaster recovery** | None | Daily Redis snapshot, S3 cross-region replication, documented RTO/RPO |
+
+**On the model side:** the LoRA adapter at
+[`jantam13/victor-triage-lora-llama3.1-8b`](https://huggingface.co/jantam13/victor-triage-lora-llama3.1-8b)
+is a hackathon-scope fine-tune. Production V2 retraining would expand
+the corpus beyond the current 50k MIMIC-IV CVD cases, add held-out
+evaluation against a balanced demographic test set with reported
+sensitivity/specificity per subgroup, and publish a model card with
+intended-use scope, known failure modes, and refresh cadence.
+
+---
+
 ## License
 
 MIT.
