@@ -44,7 +44,7 @@ function ageFromDOB(dob) {
 
 function mergedPatient(base, identity) {
   if (!identity) return base;
-  const { name, dob, complaint } = identity;
+  const { name, dob, gender, complaint } = identity;
   const merged = { ...base };
   if (name) merged.name = name.toUpperCase();
   if (dob) {
@@ -52,6 +52,11 @@ function mergedPatient(base, identity) {
     const a = ageFromDOB(dob);
     if (a != null) merged.age = a;
   }
+  // EpicPatientBanner reads `patient.sex`; the kiosk captures `gender`.
+  // Epic's banner historically shows binary sex, but we honour the
+  // patient's actual selection here ("Female" / "Male" / "Non-binary" /
+  // "Prefer not to say") — chart accuracy beats UI compactness.
+  if (gender) merged.sex = gender;
   if (complaint) merged.cc = complaint;
   return merged;
 }

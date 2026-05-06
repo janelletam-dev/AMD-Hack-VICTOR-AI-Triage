@@ -52,11 +52,15 @@ function ageFromDOB(dob) {
 
 function buildDemographics(identity, flagQueue) {
   if (!identity) identity = {};
-  // Demo line: name + age (gender deferred — not yet captured in flow)
+  // Demo line: name · age · gender. Gender is captured on the kiosk
+  // between DOB and complaint; "Prefer not to say" is shown verbatim
+  // (the clinician sees what the patient said) — chart accuracy beats
+  // visual brevity.
   const demoParts = [];
   if (identity.name) demoParts.push(identity.name);
   const age = ageFromDOB(identity.dob);
   if (age != null) demoParts.push(`${age}y`);
+  if (identity.gender) demoParts.push(identity.gender);
 
   // Presenting symptom: prefer concordance flag's clinical label if
   // fired (more specific than raw complaint text), fall back to the

@@ -16,7 +16,7 @@ const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:800
 // non-Anglo surnames). The two captured pieces are joined back into a
 // single `name` field for downstream consumers (identityStore,
 // sessionLog, EvidenceReport — those don't change shape).
-const PHASES = ["first_name", "last_name", "dob", "complaint", "conversation"];
+const PHASES = ["first_name", "last_name", "dob", "gender", "complaint", "conversation"];
 
 // Barge-in lets the patient interrupt TTS by speaking; we pause the audio.
 // Risk: on a laptop without headphones, the mic can pick up TTS from the
@@ -53,6 +53,13 @@ function phaseTTS(voice, phase) {
       return `And your last name?`;
     case "dob":
       return `Got it. And your date of birth?`;
+    case "gender":
+      // Button-driven, not voice-driven. Voice prompt names the options
+      // out loud so visually-impaired patients can hear them; the kiosk
+      // shows the buttons regardless. Phrasing keeps clinical purpose
+      // ("identify you on your chart") and avoids loaded "what gender are
+      // you" wording that some patients react to.
+      return `One quick thing — for your chart, how would you like to be identified? Tap female, male, non-binary, or prefer not to say.`;
     case "complaint":
       // Open-ended phrasing invites a multi-sentence narrative, not a
       // one-liner. Helios voice biomarkers need ~15s of audio to be
@@ -71,20 +78,22 @@ function phaseTTS(voice, phase) {
 function phasePrompt(phase) {
   switch (phase) {
     case "first_name":
-      return { label: "Step 1 of 5", title: "What's your first name?" };
+      return { label: "Step 1 of 6", title: "What's your first name?" };
     case "last_name":
-      return { label: "Step 2 of 5", title: "And your last name?" };
+      return { label: "Step 2 of 6", title: "And your last name?" };
     case "dob":
-      return { label: "Step 3 of 5", title: "And your date of birth?" };
+      return { label: "Step 3 of 6", title: "And your date of birth?" };
+    case "gender":
+      return { label: "Step 4 of 6", title: "How would you like to be identified?" };
     case "complaint":
       return {
-        label: "Step 4 of 5",
+        label: "Step 5 of 6",
         title: "Tell me more about your concerns.",
       };
     case "conversation":
       // The actual title is replaced at render time with J.A.C.K.I.E.'s
       // current question (see Interview component).
-      return { label: "Step 5 of 5", title: "Just a few more questions." };
+      return { label: "Step 6 of 6", title: "Just a few more questions." };
     default:
       return { label: "", title: "" };
   }
@@ -792,6 +801,12 @@ export default function PatientView() {
     if (confirm) return; // don't replay the question while we're confirming
     const prompt = phaseTTS(voice, phase);
     if (!prompt) return; // conversation phase — JACKIE drives its own TTS
+    // Gender is button-driven: play the prompt but don't auto-start the mic.
+    // The patient taps a button; voice input would only confuse Deepgram.
+    if (phase === "gender") {
+      playTTS(prompt);
+      return;
+    }
     playTTS(prompt, () => {
       // 250ms beat for a natural handoff (matches conversation flow).
       setTimeout(() => {
@@ -821,7 +836,7 @@ export default function PatientView() {
     // first_name + last_name are captured separately, then combined into
     // `name` once last_name is confirmed (or skipped). Downstream consumers
     // see only the combined `name` field.
-    setAnswers({ first_name: "", last_name: "", name: "", dob: "", complaint: "" });
+    setAnswers({ first_name: "", last_name: "", name: "", dob: "", gender: "", complaint: "" });
     lastNameAttemptsRef.current = 0;
     phaseTextRef.current = "";
     lastFinalRef.current = "";
@@ -1000,6 +1015,22 @@ export default function PatientView() {
     }
   }, [phase, voice, playTTS, confirm, scheduleMicRestart]);
 
+  // Gender selection — button-driven, no parse/confirm flow. Saves the
+  // value, pushes identity_update to the bus (so dashboard + EMR + report
+  // see it), and advances the phase. Pre-empts any in-flight TTS so the
+  // patient doesn't hear the prompt finish after they've already tapped.
+  const selectGender = useCallback((value) => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+      setTtsState("idle");
+    }
+    setAnswers((a) => ({ ...a, gender: value }));
+    setStoreIdentity({ gender: value });
+    send && send({ type: "identity_update", data: { gender: value } });
+    if (phaseIdx < PHASES.length - 1) setPhaseIdx((i) => i + 1);
+  }, [phaseIdx, send]);
+
   // Text input fallback — when mic is blocked, patient types instead.
   // Simulates a transcript event so the same parsing/confirm flow runs.
   const handleTextSubmit = useCallback((text) => {
@@ -1122,6 +1153,7 @@ export default function PatientView() {
             onConfirmYes={onConfirmYes}
             onConfirmRetry={onConfirmRetry}
             onTextSubmit={handleTextSubmit}
+            onSelectGender={selectGender}
           />
         )}
         {step === "done" && <Done room={room} answers={answers} />}
@@ -1296,7 +1328,7 @@ function Interview({
   phase, phaseIdx, answers, interimText, confirm, parseError, jackieTurn,
   framesSent, noisy, processingState, spellingMode, stillListening,
   onStart, onStopMic, onCancel, onAdvance, onConfirmYes, onConfirmRetry,
-  onTextSubmit, onRestart,
+  onTextSubmit, onRestart, onSelectGender,
 }) {
   const recording = micState === "recording";
   const error = micState === "error";
@@ -1336,6 +1368,7 @@ function Interview({
   else if (isConvo && jackieTurn?.closing) subline = "All done — a clinician will be with you soon.";
   else if (isConvo) subline = "Take your time — answer when you're ready.";
   else if (captured && phase === "complaint") subline = `Thanks for sharing. Tap "I'm done" when you've said everything, or keep talking.`;
+  else if (phase === "gender") subline = "Tap whichever fits — your chart, your call.";
   else subline = "Just a moment — getting ready to listen.";
 
   return (
@@ -1369,8 +1402,12 @@ function Interview({
         {thinking && <ThinkingDots personaName={personaName} />}
       </div>
 
-      {!isConfirming && (
+      {!isConfirming && phase !== "gender" && (
         <MicCircle recording={recording} error={error} onClick={recording ? onStopMic : onStart} />
+      )}
+
+      {phase === "gender" && !isConfirming && (
+        <GenderPicker onSelect={onSelectGender} />
       )}
 
       {/* Soft "I'm still here" cue during the open-ended complaint phase.
@@ -1653,6 +1690,7 @@ function PhaseStepper({ phaseIdx, answers }) {
     { key: "first_name", label: "First name" },
     { key: "last_name", label: "Last name" },
     { key: "dob", label: "Date of birth" },
+    { key: "gender", label: "Gender" },
     { key: "complaint", label: "Reason for visit" },
     { key: "conversation", label: "Follow-up" },
   ];
@@ -1722,6 +1760,44 @@ function MicCircle({ recording, error, onClick }) {
           <path d="M19 11a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.92V20H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2.08A7 7 0 0 0 19 11z"/>
         </svg>
       </button>
+    </div>
+  );
+}
+
+// Button picker for the gender phase. Replaces the mic circle on the
+// gender step (no voice input here — it's intentionally tap-only since
+// "Are you male, female, or non-binary?" via voice has too many failure
+// modes and is more invasive than a button tap). Order: Female first
+// because the demo's pitch is centered on under-triage of women in CVD.
+function GenderPicker({ onSelect }) {
+  const opts = ["Female", "Male", "Non-binary", "Prefer not to say"];
+  return (
+    <div style={{
+      display: "flex", flexWrap: "wrap", gap: 12,
+      justifyContent: "center", maxWidth: 560,
+    }}>
+      {opts.map((value) => (
+        <button
+          key={value}
+          onClick={() => onSelect(value)}
+          style={{
+            padding: "16px 28px", borderRadius: 999,
+            background: "linear-gradient(to right, var(--vic-primary), #008ea1)",
+            color: "var(--vic-on-primary)",
+            fontWeight: 700, fontSize: 16,
+            border: "none", cursor: "pointer",
+            minWidth: 160,
+            boxShadow: "0 8px 30px rgba(47, 217, 244, 0.3)",
+            letterSpacing: "0.02em",
+            transition: "transform .12s",
+          }}
+          onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.97)")}
+          onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+          onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+        >
+          {value}
+        </button>
+      ))}
     </div>
   );
 }
