@@ -35,6 +35,12 @@ export const DEMO_EVENTS = [
     adjustment_reason: "Tier 1 concordance flag — atypical CVD presentation with elevated voice biomarkers"
   } },
   { delay: 2800, type: "agent_activity", data: { agent: "V.I.C.T.O.R.", status: "active", action: "Escalation routed · ESI 2" } },
+  // J.A.C.K.I.E.'s escalated-mode follow-up (after the concordance flag).
+  // In a live session this fires after V.I.C.T.O.R. flips state.escalated = true.
+  { delay: 3000, type: "jackie_turn", data: {
+    text: "I just want to make sure I have the full picture. Have you had any pressure or tightness in your chest, jaw, or arm — even briefly?",
+    turn: 1, max_turns: 6, language: "en",
+  } },
 ];
 
 export const DEMO_PATIENT = {
