@@ -32,6 +32,16 @@ export default function SwarmPanel({ activeAgents = new Set(), processLoad = 87,
             }}>
               5-Agent Swarm
             </h2>
+            <p style={{
+              margin: "2px 0 0", fontSize: 11,
+              color: "var(--vic-on-surface-variant)", opacity: 0.75,
+              maxWidth: 360, lineHeight: 1.45,
+            }}>
+              Five internal agents collaborate behind the scenes. The
+              patient hears <strong>one voice persona</strong> selected
+              at the kiosk — Victor (male, ElevenLabs) or Jackie
+              (female, ElevenLabs) — speaking on behalf of the swarm.
+            </p>
           </div>
           <div style={{
             display: "flex", alignItems: "center", gap: 12,

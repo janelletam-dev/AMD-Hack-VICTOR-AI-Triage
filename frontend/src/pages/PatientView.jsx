@@ -866,6 +866,15 @@ export default function PatientView() {
     if (ttsAbortRef.current) {
       try { ttsAbortRef.current.abort(); } catch { /* noop */ }
     }
+    // Hard-cancel any in-flight Web Speech utterance too. Without this,
+    // if a prior TTS fell back to Web Speech (server temporarily 5xx'd or
+    // returned fallback JSON), the queued utterance keeps playing while
+    // a fresh ElevenLabs stream starts — the patient hears two voices at
+    // the same time, often in different timbres (browser default vs the
+    // selected persona). Live calibration on 2026-05-07 surfaced this.
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      try { window.speechSynthesis.cancel(); } catch { /* noop */ }
+    }
     const ac = new AbortController();
     ttsAbortRef.current = ac;
     const url = `${HTTP_BASE}/api/tts?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
@@ -915,6 +924,11 @@ export default function PatientView() {
       }, Math.min(text.length * 50, 3000));
       return;
     }
+    // Defense-in-depth against the voice double-play bug: cancel ANY
+    // queued or in-progress Web Speech utterance before queuing the new
+    // one. Without this, two consecutive fallbacks (ElevenLabs flaky →
+    // both fall back) result in both utterances playing concurrently.
+    try { window.speechSynthesis.cancel(); } catch { /* noop */ }
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.95;
     utterance.pitch = 1.0;
