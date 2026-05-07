@@ -1596,7 +1596,7 @@ function KioskFooter() {
     }}>
       <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
         <Stat dot="var(--vic-secondary)" label="System Status: Optimal" />
-        <Stat label="End-to-End HIPAA Encrypted" />
+        <Stat label="TLS encrypted · session-only · no audio stored" />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <span style={{ color: "var(--vic-on-surface-variant)", fontSize: 11 }}>

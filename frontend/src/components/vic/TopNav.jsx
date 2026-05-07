@@ -71,9 +71,9 @@ export default function TopNav({ activeTab = "Patient Queue", urgentOverride = t
             <p style={{
               margin: 0, fontSize: 11, fontWeight: 700, color: "#ffffff",
               textTransform: "uppercase", letterSpacing: "0.06em",
-            }}>NP. Sarah Chen</p>
+            }}>Janelle Tamayo, RN</p>
             <p style={{ margin: 0, fontSize: 10, color: "var(--vic-primary)" }}>
-              Triage Level 1
+              Founder · Demo Operator
             </p>
           </div>
           <div style={{
@@ -82,7 +82,7 @@ export default function TopNav({ activeTab = "Patient Queue", urgentOverride = t
             background: "linear-gradient(135deg, #2e3447, #4a5168)",
             display: "grid", placeItems: "center",
             color: "var(--vic-primary)", fontSize: 14, fontWeight: 700,
-          }}>SC</div>
+          }}>JT</div>
         </div>
       </div>
     </nav>

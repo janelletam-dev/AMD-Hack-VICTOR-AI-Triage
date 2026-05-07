@@ -56,7 +56,7 @@ function _buildCurrentPatientRow(identity, flagQueue, esi, sessionStartTs) {
   const age = _ageFromDob(dob);
   const sex = gender ? (gender[0] || "").toUpperCase() : null;
   const ageSex = [sex, age].filter(v => v !== null && v !== undefined && v !== "").join(" / ");
-  const cc = chief_complaint_short || (complaint ? complaint.slice(0, 40) : "Awaiting CC");
+  const cc = chief_complaint_short || (complaint ? complaint.slice(0, 40) : "Awaiting chief complaint");
   const meta = ageSex ? `${ageSex} · ${cc}` : cc;
 
   const adjustedEsi = esi?.victor_esi || esi?.adjusted;
