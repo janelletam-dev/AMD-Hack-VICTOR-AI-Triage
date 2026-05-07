@@ -45,9 +45,27 @@ _OPQRST_SAMPLE_FALLBACK: tuple[str, ...] = (
     "unrelated?",
 )
 
-_FALLBACK_ESCALATED = (
+# Escalated-mode deterministic fallback. Used when the LLM is offline AND
+# V.I.C.T.O.R. has already fired a concordance flag — JACKIE switches into
+# targeted cardiac elicitation per the system prompt's ESCALATED MODE
+# section. Bug surfaced 2026-05-07 on the Stage 1 Railway deploy: previously
+# this was a SINGLE string, so once a session escalated every JACKIE
+# fallback turn looped the same cardiac probe regardless of patient answer.
+# Now rotates through cardiac-focused coverage in clinical priority order.
+_FALLBACK_ESCALATED: tuple[str, ...] = (
     "I just want to make sure I have the full picture. Have you had any "
-    "pressure or tightness in your chest, jaw, or arm — even briefly?"
+    "pressure or tightness in your chest, jaw, or arm — even briefly?",
+    "Did you have any sweating, nausea, or shortness of breath alongside "
+    "the pain?",
+    "Did this come on suddenly, or did it build up gradually?",
+    "Was it worse when you were active — walking, climbing stairs — or "
+    "did it happen even at rest?",
+    "Have you ever had a heart attack, stent, or bypass before? Anyone in "
+    "your family had a heart attack at a young age?",
+    "Do you smoke, or have high blood pressure, diabetes, or high "
+    "cholesterol?",
+    "Is there anything else you've been feeling — even something that "
+    "seems unrelated — that I should know about?",
 )
 
 
@@ -61,6 +79,9 @@ class JackieAgent:
         # is process-scoped (single-room demo). Multi-room would key it on
         # session_id; not worth the complexity for the hackathon.
         self._fallback_idx = 0
+        # Separate walker for escalated-mode fallback so the cardiac probe
+        # list advances independently of the standard OPQRST/SAMPLE walker.
+        self._fallback_idx_escalated = 0
 
     async def respond(
         self,
@@ -285,12 +306,18 @@ class JackieAgent:
         except (LLMUnavailable, ValueError) as e:
             log.info("jackie fallback (LLM unavailable): %s", e)
             if escalated:
-                return _FALLBACK_ESCALATED
+                # Walk the cardiac-focused escalated-mode list in order
+                # rather than returning the same string every call (the
+                # 2026-05-07 loop bug).
+                idx = self._fallback_idx_escalated % len(_FALLBACK_ESCALATED)
+                self._fallback_idx_escalated += 1
+                return _FALLBACK_ESCALATED[idx]
             # Walk the OPQRST/SAMPLE coverage list in order on each call.
             idx = self._fallback_idx % len(_OPQRST_SAMPLE_FALLBACK)
             self._fallback_idx += 1
             return _OPQRST_SAMPLE_FALLBACK[idx]
 
     def reset_fallback_progress(self) -> None:
-        """Reset the deterministic-fallback walker. Call between sessions."""
+        """Reset both deterministic-fallback walkers. Call between sessions."""
         self._fallback_idx = 0
+        self._fallback_idx_escalated = 0
