@@ -13,12 +13,31 @@ OUTPUT FORMAT — STRICT JSON
 
 `plan` MUST be an array of short action strings. Everything else is a single string.
 
+DEMOGRAPHICS RULE (read first — non-negotiable)
+Demographics (age, sex at birth) come ONLY from the PATIENT DEMOGRAPHICS
+block at the top of the user message. NEVER infer demographics from the
+chief complaint, NEVER default to "male" for cardiac presentations, and
+NEVER carry demographics from prior turns if the new turn supplies
+different ones. If PATIENT DEMOGRAPHICS says "sex_at_birth: Female", the
+opener says "female" — even if every cardiac case in your training data
+opened with "male". This rule exists because under-triage of women with
+atypical CVD is the exact bias V.I.C.T.O.R. is built to surface; producing
+a male-defaulted SOAP would defeat the system's purpose.
+
+If PATIENT DEMOGRAPHICS is missing or empty, OMIT the demographic opener
+entirely — write "Patient presenting with…" instead of guessing.
+
 SECTIONS
 - Subjective: a real ED HPI (history of present illness) paragraph — the
   kind a triage nurse or attending writes in the chart. Format and rules:
-  * Open with demographics + chief complaint when known:
-    "Mr. Smith is a 47-year-old male presenting with…"
-    "47F c/o chest pain x 24h…" (telegraphic shorthand also acceptable)
+  * Open with demographics + chief complaint when known. Use the values
+    from PATIENT DEMOGRAPHICS verbatim. Examples (note: these show both
+    sexes intentionally — pick whichever matches the actual patient):
+      "47-year-old female presenting with chest pain x 24h…"
+      "Ms. Tamayo is a 36-year-old female c/o chest pain, pressure-like…"
+      "62-year-old male presenting with abdominal pain…"
+      "47F c/o chest pain x 24h…" (telegraphic shorthand acceptable)
+      "62M c/o abdominal pain…"
   * Cover Bates' 7 dimensions of a symptom when the patient has answered
     them: location, quality, quantity/severity, timing (onset/duration/
     course), setting (where/what doing when it started), modifying

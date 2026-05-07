@@ -71,11 +71,34 @@ class ScribeAgent:
           biomarkers:     dict  — { helios: { stress, distress, ... } }
           flags:          list  — concordance flags (raw + glossed)
           esi:            dict  — { standard, adjusted, reason }
+          gender:         str   — sex at birth, captured at kiosk
+          age:            int   — derived from DOB at kiosk
         """
         try:
+            # Demographics header — pinned at the TOP of the user message
+            # so the LoRA cannot miss them inside the JSON blob. Without
+            # this, the MIMIC-IV-trained model (predominantly male CVD
+            # corpus) hallucinates "36-year-old male" for chest pain
+            # presentations even when the kiosk captured female. Live
+            # calibration on 2026-05-07 surfaced this bias directly.
+            gender = context.get("gender")
+            age = context.get("age")
+            demo_lines: list[str] = []
+            if age is not None:
+                demo_lines.append(f"  age: {age}")
+            if gender:
+                demo_lines.append(f"  sex_at_birth: {gender}")
+            demographics_header = (
+                "PATIENT DEMOGRAPHICS (use these EXACTLY in the Subjective "
+                "demographic opener — do NOT infer from chief complaint, "
+                "do NOT default to male):\n"
+                + ("\n".join(demo_lines) if demo_lines else "  (not provided — omit demographic opener entirely)")
+                + "\n\n"
+            )
             user = (
-                "Update the SOAP note with this new context. Preserve prior "
-                "content; merge new information. Output JSON only.\n\n"
+                demographics_header
+                + "Update the SOAP note with this new context. Preserve "
+                "prior content; merge new information. Output JSON only.\n\n"
                 f"Prior note: {json.dumps(self.note.to_dict())}\n\n"
                 f"New context:\n{json.dumps(context, default=str)}"
             )
