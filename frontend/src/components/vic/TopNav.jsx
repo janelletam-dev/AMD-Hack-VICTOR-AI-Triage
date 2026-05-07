@@ -1,7 +1,20 @@
 import { Link, useLocation } from "react-router-dom";
 
-export default function TopNav({ activeTab = "Patient Queue", urgentOverride = true }) {
-  const tabs = ["Dashboard", "Patient Queue", "Analytics", "Staffing"];
+// Route-aware subtitle so the clinician knows which surface they're on
+// at a glance. Replaces the previous static tab strip (Dashboard /
+// Patient Queue / Analytics / Staffing) — three of those tabs were
+// non-functional aspirational chrome and clicked through to nothing.
+// The dashboard's own in-page actions (Approve & Push to Epic, Evidence
+// Report) handle real cross-route navigation.
+const ROUTE_LABELS = {
+  "/clinician":          "Live triage workspace",
+  "/clinician/epic":     "EMR chart · post-approval",
+  "/clinician/report":   "Evidence report",
+};
+
+export default function TopNav({ urgentOverride = true }) {
+  const location = useLocation();
+  const subtitle = ROUTE_LABELS[location.pathname] || "Clinician";
   return (
     <nav style={{
       position: "fixed", top: 0, left: 0, right: 0, height: 80, zIndex: 50,
@@ -11,7 +24,7 @@ export default function TopNav({ activeTab = "Patient Queue", urgentOverride = t
       backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
       boxShadow: "0 20px 50px rgba(47, 217, 244, 0.08)",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
         <Link to="/clinician" style={{ textDecoration: "none" }}>
           <span style={{
             fontFamily: "'Space Grotesk', 'Inter', sans-serif",
@@ -21,27 +34,17 @@ export default function TopNav({ activeTab = "Patient Queue", urgentOverride = t
             V.I.C.T.O.R. ER Triage
           </span>
         </Link>
-        <div style={{ display: "flex", gap: 24 }}>
-          {tabs.map((t) => {
-            const active = t === activeTab;
-            return (
-              <a
-                key={t}
-                href="#"
-                onClick={(e) => e.preventDefault()}
-                style={{
-                  fontFamily: "'Space Grotesk', sans-serif",
-                  fontSize: 14, letterSpacing: "-0.01em",
-                  color: active ? "var(--vic-primary)" : "var(--vic-on-surface-variant)",
-                  borderBottom: active ? "2px solid var(--vic-primary)" : "2px solid transparent",
-                  paddingBottom: 4, textDecoration: "none",
-                }}
-              >
-                {t}
-              </a>
-            );
-          })}
-        </div>
+        <span style={{
+          height: 20, borderLeft: "1px solid rgba(69, 70, 77, 0.4)",
+        }} />
+        <span style={{
+          fontFamily: "'Space Grotesk', sans-serif",
+          fontSize: 13, fontWeight: 500,
+          color: "var(--vic-on-surface-variant)",
+          letterSpacing: "-0.01em",
+        }}>
+          {subtitle}
+        </span>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -61,8 +64,8 @@ export default function TopNav({ activeTab = "Patient Queue", urgentOverride = t
             }}>1 Urgent Override</span>
           </div>
         )}
-        <button style={iconBtn}>🔔</button>
-        <button style={iconBtn}>⚙</button>
+        <button style={iconBtn} title="Notifications · V2">🔔</button>
+        <button style={iconBtn} title="Settings · V2">⚙</button>
         <div style={{
           display: "flex", alignItems: "center", gap: 12,
           paddingLeft: 16, borderLeft: "1px solid rgba(69, 70, 77, 0.3)",

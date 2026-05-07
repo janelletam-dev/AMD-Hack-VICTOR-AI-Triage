@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import TopNav from "../components/vic/TopNav.jsx";
@@ -597,7 +597,13 @@ function ActionFooter({ hasSoap, triageComplete, pushing, onApprove, onDowngrade
       flexWrap: "wrap", gap: 16,
     }}>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <button style={ghostBtn}>✎ Edit Note</button>
+        <button
+          disabled
+          title="V2 — note editing is on the V2 roadmap. For now, the clinician bedside panel above lets you append findings that recompose the SOAP."
+          style={{ ...ghostBtn, opacity: 0.5, cursor: "not-allowed" }}
+        >
+          ✎ Edit Note
+        </button>
         <button
           onClick={onViewReport}
           style={ghostBtn}
@@ -2421,12 +2427,24 @@ function RiskScoreBadge({ data }) {
 }
 
 function ConfirmDialog({ title, message, onConfirm, onCancel }) {
+  // Standard modal dismiss affordances: Escape key cancels, backdrop
+  // click cancels. Without these the only exit is the Cancel button —
+  // surprising UX, audit-flagged on 2026-05-07.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onCancel?.(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000,
-      display: "grid", placeItems: "center",
-      background: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(4px)",
-    }}>
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel?.(); }}
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        display: "grid", placeItems: "center",
+        background: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(4px)",
+      }}>
       <div style={{
         background: "var(--vic-bg-highest)", borderRadius: 16,
         padding: 32, maxWidth: 440, width: "90%",
@@ -2460,12 +2478,22 @@ function ConfirmDialog({ title, message, onConfirm, onCancel }) {
 
 function DowngradeModal({ onSubmit, onCancel }) {
   const [reason, setReason] = useState("");
+  // Mirror ConfirmDialog: Escape key + backdrop click both cancel.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onCancel?.(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 1000,
-      display: "grid", placeItems: "center",
-      background: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(4px)",
-    }}>
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel?.(); }}
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        display: "grid", placeItems: "center",
+        background: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(4px)",
+      }}>
       <div style={{
         background: "var(--vic-bg-highest)", borderRadius: 16,
         padding: 32, maxWidth: 480, width: "90%",

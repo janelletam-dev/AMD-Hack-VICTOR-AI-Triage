@@ -4,10 +4,14 @@
 // of the queue — so when Janelle runs a session at the kiosk, her chart
 // shows up here as the active case, not the hardcoded R. Macaraeg row
 // the dashboard had during early development.
+// Mock waiting-room rows are tagged `mock: true` so the rendered card
+// can show a "DEMO" badge — judges and demo viewers should not read
+// these as real patients. The current-patient row (computed from live
+// state) is NOT mock and gets a "LIVE" badge instead.
 const MOCK_WAITING = [
-  { id: "jenkins",  name: "S. Jenkins",  meta: "F / 32 · Abdominal Pain",   level: "URGENT",          ago: "14m ago" },
-  { id: "henderson",name: "T. Henderson",meta: "M / 19 · Wrist Fracture",   level: "STANDARD",        ago: "28m ago" },
-  { id: "martinez", name: "L. Martinez", meta: "F / 45 · Persistent Cough", level: "STANDARD",        ago: "45m ago" },
+  { id: "jenkins",  name: "S. Jenkins",  meta: "F / 32 · Abdominal Pain",   level: "URGENT",          ago: "14m ago", mock: true },
+  { id: "henderson",name: "T. Henderson",meta: "M / 19 · Wrist Fracture",   level: "STANDARD",        ago: "28m ago", mock: true },
+  { id: "martinez", name: "L. Martinez", meta: "F / 45 · Persistent Cough", level: "STANDARD",        ago: "45m ago", mock: true },
 ];
 
 const LEVEL_COLOR = {
@@ -101,7 +105,11 @@ export default function SideQueue({
     identity, flagQueue, esi, sessionStartTs
   );
   const queue = computedCurrent ? [computedCurrent, ...MOCK_WAITING] : MOCK_WAITING;
-  const waitingCount = queue.length + (computedCurrent ? 8 : 12);
+  // Live row + 3 demo rows shown. The "+N more" count was previously
+  // a fake "12 patients waiting" — replaced with an honest count of
+  // visible rows + a "(demo waitlist)" subtitle so the queue panel
+  // doesn't claim to represent a real waiting room.
+  const visibleCount = queue.length;
 
   return (
     <aside style={{
@@ -123,7 +131,15 @@ export default function SideQueue({
           margin: "4px 0 0", color: "var(--vic-on-surface-variant)",
           fontSize: 11, fontWeight: 500,
         }}>
-          {waitingCount} Patients Waiting · V.I.C.T.O.R. Active
+          {visibleCount} {visibleCount === 1 ? "patient" : "patients"} · V.I.C.T.O.R. Active
+        </p>
+        <p style={{
+          margin: "2px 0 0", color: "var(--vic-on-surface-variant)",
+          fontSize: 9, fontWeight: 500, opacity: 0.6,
+          fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.06em",
+          textTransform: "uppercase",
+        }}>
+          live + demo waitlist
         </p>
       </div>
 
@@ -177,6 +193,15 @@ export default function SideQueue({
                       fontSize: 8, color: "var(--vic-primary)",
                       letterSpacing: "0.1em",
                     }}>· LIVE</span>
+                  )}
+                  {p.mock && (
+                    <span style={{
+                      fontSize: 8,
+                      color: "var(--vic-on-surface-variant)",
+                      letterSpacing: "0.1em",
+                      fontWeight: 600,
+                      opacity: 0.7,
+                    }}>· DEMO</span>
                   )}
                 </span>
                 <span style={{ color: "var(--vic-on-surface-variant)", fontSize: 10 }}>{p.ago}</span>
