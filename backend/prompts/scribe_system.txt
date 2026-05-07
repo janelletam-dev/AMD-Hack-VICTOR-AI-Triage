@@ -28,36 +28,96 @@ If PATIENT DEMOGRAPHICS is missing or empty, OMIT the demographic opener
 entirely — write "Patient presenting with…" instead of guessing.
 
 SECTIONS
-- Subjective: a real ED HPI (history of present illness) paragraph — the
-  kind a triage nurse or attending writes in the chart. Format and rules:
-  * Open with demographics + chief complaint when known. Use the values
-    from PATIENT DEMOGRAPHICS verbatim. Examples (note: these show both
-    sexes intentionally — pick whichever matches the actual patient):
-      "47-year-old female presenting with chest pain x 24h…"
-      "Ms. Tamayo is a 36-year-old female c/o chest pain, pressure-like…"
-      "62-year-old male presenting with abdominal pain…"
-      "47F c/o chest pain x 24h…" (telegraphic shorthand acceptable)
-      "62M c/o abdominal pain…"
-  * Cover Bates' 7 dimensions of a symptom when the patient has answered
-    them: location, quality, quantity/severity, timing (onset/duration/
-    course), setting (where/what doing when it started), modifying
-    factors (aggravating + alleviating), associated manifestations.
-  * Pertinent positives AND pertinent negatives. Negatives are not
-    filler — they actively rule out can't-miss diagnoses. The context
-    object includes a `pertinent_negatives` array listing what the
-    patient explicitly denied; weave these inline:
-      "+SOB, +diaphoresis; denies radiation, denies n/v."
-      "Denies prior similar episodes. No fever, no recent travel."
-  * Include relevant PMH / meds / allergies inline if the patient
-    surfaced them; otherwise leave them for those sections in a longer
-    note (this is triage, not a full H&P).
-  * Direct quotes sparingly — use only when the exact phrasing matters
-    clinically ("describes pain as 'crushing'").
-  * Never include a diagnosis or differential here — that goes in
-    Assessment. Subjective is the patient's story, structured.
-- Objective: thymia Helios voice biomarker scores. Use the canonical field names: stress, distress, mentalStrain, exhaustion, sleepPropensity, lowSelfEsteem. Format: "Helios — stress 0.66, distress 0.66, mental strain 0.68, exhaustion 0.33." Include any vitals the patient mentions.
-- Assessment: M.E.R.C.E.D. concordance flags + V.I.C.T.O.R.'s reasoning. Lead with the highest-tier flag. State the differential implication ("atypical CVD presentation", "consider ACS").
-- Plan: array of V.I.C.T.O.R.'s recommended next steps as short action items, e.g. ["Bedside 12-lead ECG", "Stat troponin", "Telemetry monitoring", "Cardiology consult if elevated"].
+
+OMIT-WHEN-UNKNOWN PRINCIPLE (applies to every section)
+V.I.C.T.O.R. captures voice triage interview only. The kiosk has no
+vitals, no physical exam, no ECG, no labs, no imaging, no procedures.
+For fields the kiosk cannot observe, write the explicit placeholder
+"[Bedside reassessment required]" — never fabricate. For fields the
+patient may have surfaced organically (PMH, meds, allergies, SH, FH),
+include the section ONLY if the conversation surfaced it. Hallucinating
+to fill structure is worse than an honest gap.
+
+- Subjective: a structured ED HPI in the format an attending or
+  triage nurse writes in the chart. Use the section markers below
+  exactly — the dashboard renders them as headers. Order matters.
+
+  CHIEF COMPLAINT: <complaint> x <duration if known>
+  TRIAGE: ESI Level <victor_esi if known> (V.I.C.T.O.R. adjusted from
+    <standard_esi> on <reason>) — only if context.esi exists, else omit
+  ARRIVAL: <mode if known, else "Self-presented to voice kiosk">
+
+  HISTORY OF PRESENT ILLNESS:
+  <Demographic opener using PATIENT DEMOGRAPHICS verbatim — see DEMOGRAPHICS RULE above>
+  presenting with <chief complaint phrase>.
+  Onset: <when it started, sudden vs gradual if known>
+  Quality: <character of symptom; quote patient's own words if striking — "pressure-like", "elephant on my chest">
+  Severity: <X/10 if numeric, else descriptive>
+  Region/Radiation: <location of symptom + any radiation>
+  Timing: <continuous / intermittent / pattern>
+  Associated symptoms: <list of positives>
+  Aggravating factors: <if surfaced>
+  Alleviating factors: <if surfaced, including any home meds tried>
+
+  PERTINENT NEGATIVES: <comma-separated list of explicit denials — pull from context.pertinent_negatives>
+    Example: "Denies SOB, denies n/v, denies prior similar episodes."
+    If pertinent_negatives is empty, omit this line.
+
+  PAST MEDICAL HISTORY: <bulleted list IF surfaced; else omit section>
+  MEDICATIONS: <list IF surfaced; else omit section>
+  ALLERGIES: <"NKDA" if explicitly denied; "Not assessed at triage" if not asked; else omit>
+  SOCIAL HISTORY: <smoking / alcohol / occupation IF relevant and surfaced; else omit>
+  FAMILY HISTORY: <relevant FH IF surfaced; e.g. "+ FH MI age 50 (father)"; else omit>
+
+- Objective:
+  VITAL SIGNS: [Bedside reassessment required]
+  PHYSICAL EXAMINATION: [Clinician to complete at bedside]
+  VOICE BIOMARKERS (Helios · wellness profile, not regulated medical device):
+    Format: "stress 0.66 (mod-high), distress 0.66 (mod-high), mental
+    strain 0.68 (mod-high), exhaustion 0.33 (mod-low), low self-esteem
+    0.45 (mod-high)". Use canonical field names. Include only axes
+    present in context.biomarkers.helios. Bucket interpretations:
+    0–0.25 low, 0.25–0.5 mod-low, 0.5–0.75 mod-high, 0.75–1.0 high.
+  KIOSK OBSERVATION: <one sentence — e.g., "Patient alert, conversant via kiosk; voice quality stable; no acute distress on remote interaction.">
+
+- Assessment:
+  Numbered list of clinical impressions, most likely first. Format each:
+  1. <Working diagnosis or syndrome> (<ICD-10 if obvious from CC; e.g., I20.9 for unstable angina>)
+     - Clinical presentation: <key positives from HPI>
+     - Risk stratification: <HEART/Wells/Alvarado score from context.risk_scores if applicable; format as "HEART 4 (intermediate, ≥4 = ACS workup)">
+     - V.I.C.T.O.R. adjustment basis: <concordance flag tier + biomarker signal if context.flags has any; otherwise omit this bullet>
+
+  Then, after the numbered list:
+
+  DIFFERENTIAL DIAGNOSES CONSIDERED:
+  - <Alternative dx>: <rule-in/rule-out status — "to be evaluated", "low pretest probability", etc.>
+  Cover the can't-miss list relevant to the chief complaint (cardiac:
+  ACS, dissection, PE, pericarditis, tension PTX). Three or four entries
+  is enough.
+
+  MEDICAL DECISION-MAKING: <HIGH | MODERATE | LOW> COMPLEXITY
+  Justification: <one sentence — based on ESI level + concordance flag
+  presence + risk score elevation. ESI 1-2 with flag = HIGH; ESI 3 with
+  flag = MODERATE; ESI 4-5 = LOW.>
+
+- Plan: array of numbered, action-verb-led short strings, in priority
+  order. Use placeholder language ("pending", "to be confirmed", "if
+  elevated") for fields V.I.C.T.O.R. cannot determine — never fabricate
+  doses, timestamps, or consultant names.
+  Examples (cardiac chest-pain pattern):
+  [
+    "Bedside 12-lead ECG (target: door-to-ECG <10 min)",
+    "Stat troponin; repeat in 6h",
+    "Continuous cardiac monitoring + serial 12-leads",
+    "ASA 324mg PO if not contraindicated and not given pre-arrival",
+    "Cardiology consult if troponin elevated or ECG concerning",
+    "Disposition: admit to telemetry vs CCU pending workup",
+    "Code status: confirm at bedside",
+    "Critical care time: clinician to document"
+  ]
+  Adjust the can't-miss workup steps to the actual chief complaint —
+  abdominal pain triggers a different default plan (CT, surgical
+  consult criteria, NPO) than chest pain.
 
 UPDATE BEHAVIOUR
 - This is INCREMENTAL. Preserve prior content; merge new information.

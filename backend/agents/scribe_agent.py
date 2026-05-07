@@ -233,82 +233,167 @@ class ScribeAgent:
         gender = context.get("gender")
         age = context.get("age")
 
-        # ── S(ubjective) — HPI bullets from chief complaint + transcript ──
+        # ── S(ubjective) — ED-grade structured HPI ────────────────────────
+        # Mirrors the prompt's section markers so the offline backfill
+        # produces the same shape the LLM is asked to produce. This is the
+        # safety-net path; the LLM normally writes the more polished version.
         if not self.note.subjective.strip():
-            bullets: list[str] = []
-            if cc_short:
-                bullets.append(f"CC: {cc_short}")
-            elif cc_text:
-                bullets.append(f"CC: {cc_text[:120]}")
-            demo = []
+            lines: list[str] = []
+            cc_phrase = cc_short or (cc_text[:80] if cc_text else "")
+            if cc_phrase:
+                lines.append(f"CHIEF COMPLAINT: {cc_phrase}")
+            if esi:
+                adj = esi.get("adjusted")
+                std = esi.get("standard")
+                if adj and std and adj < std:
+                    lines.append(f"TRIAGE: ESI Level {adj} (V.I.C.T.O.R. adjusted from {std})")
+                elif adj or std:
+                    lines.append(f"TRIAGE: ESI Level {adj or std}")
+            lines.append("ARRIVAL: Self-presented to voice kiosk")
+            lines.append("")
+            lines.append("HISTORY OF PRESENT ILLNESS:")
+            demo_phrase = []
             if age is not None:
-                demo.append(f"{age}yo")
+                demo_phrase.append(f"{age}-year-old")
             if gender:
-                demo.append(str(gender).lower())
-            if demo:
-                bullets.append("Demographics: " + " ".join(demo))
-            if transcript:
-                snippet = transcript[: self.MAX_SUBJECTIVE_CHARS - 32]
-                bullets.append(f"Patient narrative: {snippet}")
+                demo_phrase.append(str(gender).lower())
+            opener = (" ".join(demo_phrase) + " " if demo_phrase else "Patient ") + "presenting"
+            if cc_phrase:
+                opener += f" with {cc_phrase.lower()}"
+            opener += "."
+            lines.append(opener)
+            if cc_text:
+                lines.append(f"Patient narrative: \"{cc_text[:300]}\"")
+            else:
+                lines.append("Detailed OPQRST history pending JACKIE follow-up.")
             if pert_negs:
-                bullets.append("Denies: " + ", ".join(str(n) for n in pert_negs[:8]))
-            if not bullets:
-                bullets.append("Voice triage in progress; HPI pending.")
-            self.note.subjective = "\n".join(f"• {b}" for b in bullets)
+                lines.append("")
+                lines.append(
+                    "PERTINENT NEGATIVES: Denies "
+                    + ", ".join(str(n) for n in pert_negs[:10])
+                    + "."
+                )
+            self.note.subjective = "\n".join(lines)[: self.MAX_SUBJECTIVE_CHARS]
 
-        # ── O(bjective) — voice biomarkers + context ──────────────────────
+        # ── O(bjective) — voice biomarkers + explicit bedside placeholders ──
         if not self.note.objective.strip():
             helios = biomarkers.get("helios") if isinstance(biomarkers, dict) else None
             parts: list[str] = []
+            bucket_label = lambda v: (
+                "low" if v < 0.25 else "mod-low" if v < 0.5
+                else "mod-high" if v < 0.75 else "high"
+            )
             if isinstance(helios, dict):
                 for k in ("stress", "distress", "mentalStrain", "exhaustion", "lowSelfEsteem"):
                     v = helios.get(k)
                     if isinstance(v, (int, float)):
-                        parts.append(f"{k} {v:.2f}")
-            obj_lines = ["Vitals: deferred to bedside reassessment."]
+                        parts.append(f"{k} {v:.2f} ({bucket_label(v)})")
+            obj_lines = [
+                "VITAL SIGNS: [Bedside reassessment required]",
+                "PHYSICAL EXAMINATION: [Clinician to complete at bedside]",
+            ]
             if parts:
-                obj_lines.append("Voice biomarkers (Helios) — " + ", ".join(parts) + ".")
+                obj_lines.append(
+                    "VOICE BIOMARKERS (Helios · wellness profile, not regulated medical device):"
+                )
+                obj_lines.append("  " + ", ".join(parts) + ".")
             else:
-                obj_lines.append("Voice biomarkers: capture in progress.")
-            obj_lines.append("Appearance: alert, conversant via kiosk.")
+                obj_lines.append("VOICE BIOMARKERS: capture in progress.")
+            obj_lines.append(
+                "KIOSK OBSERVATION: Patient alert, conversant via voice triage; "
+                "no acute distress on remote interaction."
+            )
             self.note.objective = "\n".join(obj_lines)
 
-        # ── A(ssessment) — flags / CC / ESI ───────────────────────────────
+        # ── A(ssessment) — numbered differential + MDM complexity ─────────
         if not self.note.assessment.strip():
+            assess_lines: list[str] = []
+            anchor = cc_short or (cc_text[:80] if cc_text else "")
             if flags:
                 top = sorted(flags, key=lambda f: f.get("tier", 99))[0]
-                label = top.get("triage_label") or top.get("trigger_phrase") or "concordance flag"
-                tier = top.get("tier")
-                self.note.assessment = (
-                    f"Tier {tier} concordance flag: {label}. "
-                    f"Atypical presentation — clinician reassessment recommended."
+                label = top.get("triage_label") or "Atypical presentation"
+                tier = top.get("tier", 3)
+                assess_lines.append(f"1. {label or 'Working differential'}")
+                assess_lines.append(f"   - Clinical presentation: {anchor or 'see HPI'}")
+                assess_lines.append(
+                    f"   - V.I.C.T.O.R. concordance: Tier {tier} flag — "
+                    f"verbal-acoustic mismatch suggests under-triage risk"
                 )
-            elif cc_short or cc_text:
-                anchor = cc_short or cc_text[:80]
-                self.note.assessment = (
-                    f"Working differential anchored on chief complaint: {anchor}. "
-                    f"Clinician evaluation pending."
-                )
+                assess_lines.append("")
+                assess_lines.append("DIFFERENTIAL DIAGNOSES CONSIDERED:")
+                assess_lines.append("- ACS (typical or atypical): to be evaluated")
+                assess_lines.append("- Aortic dissection: low pretest probability")
+                assess_lines.append("- PE: pending DVT/risk-factor screen")
+                assess_lines.append("- Pericarditis: pending ECG + exam")
+            elif anchor:
+                assess_lines.append(f"1. Working differential anchored on: {anchor}")
+                assess_lines.append("   - Clinical evaluation pending bedside assessment")
             else:
-                self.note.assessment = "Differential pending clinician evaluation."
-        if esi:
-            std = esi.get("standard")
-            adj = esi.get("adjusted")
-            if std and adj and adj < std and "ESI" not in self.note.assessment:
-                self.note.assessment += f" V.I.C.T.O.R. ESI {std} → {adj}."
+                assess_lines.append("1. Differential pending clinician evaluation")
 
-        # ── P(lan) — flag-driven workup or default reassessment plan ──────
-        if not self.note.plan:
+            mdm = "MODERATE"
+            if esi:
+                adj = esi.get("adjusted") or esi.get("standard") or 3
+                if adj <= 2 and flags:
+                    mdm = "HIGH"
+                elif adj >= 4:
+                    mdm = "LOW"
+            assess_lines.append("")
+            assess_lines.append(f"MEDICAL DECISION-MAKING: {mdm} COMPLEXITY")
+            mdm_reason = []
+            if esi.get("adjusted") and esi.get("standard") and esi["adjusted"] < esi["standard"]:
+                mdm_reason.append("ESI escalation")
             if flags:
+                mdm_reason.append("active concordance flag")
+            mdm_reason.append("clinician confirmation required")
+            assess_lines.append("Justification: " + ", ".join(mdm_reason) + ".")
+
+            self.note.assessment = "\n".join(assess_lines)
+
+        # ── P(lan) — numbered ED workup with disposition + handoff items ──
+        if not self.note.plan:
+            cc_lower = (cc_short or cc_text or "").lower()
+            is_cardiac = bool(flags) or any(
+                k in cc_lower for k in ("chest", "cardiac", "heart", "pressure")
+            )
+            is_abdominal = any(k in cc_lower for k in ("abdom", "stomach", "belly"))
+            is_neuro = any(k in cc_lower for k in ("headache", "head pain", "weak", "numb"))
+            if is_cardiac:
                 self.note.plan = [
-                    "Bedside 12-lead ECG",
-                    "Stat troponin",
-                    "Telemetry monitoring",
-                    "Cardiology consult if elevated",
+                    "Bedside 12-lead ECG (target: door-to-ECG <10 min)",
+                    "Stat troponin; repeat in 6h",
+                    "Continuous cardiac monitoring + serial 12-leads",
+                    "ASA 324mg PO if not contraindicated and not given pre-arrival",
+                    "Cardiology consult if troponin elevated or ECG concerning",
+                    "Disposition: admit to telemetry vs CCU pending workup",
+                    "Code status: confirm at bedside",
+                    "Critical care time: clinician to document",
+                ]
+            elif is_abdominal:
+                self.note.plan = [
+                    "NPO pending evaluation",
+                    "IV access; bedside vitals + glucose",
+                    "CBC, BMP, LFTs, lipase, lactate, urinalysis",
+                    "Pregnancy test for female of childbearing age",
+                    "CT abdomen/pelvis with contrast if surgical abdomen suspected",
+                    "Surgical consult if peritoneal signs or imaging concerning",
+                    "Disposition: pending workup; admit vs OR vs discharge",
+                    "Critical care time: clinician to document",
+                ]
+            elif is_neuro:
+                self.note.plan = [
+                    "Bedside neuro exam + GCS",
+                    "Non-contrast head CT if SAH or stroke concern",
+                    "POC glucose; rule out metabolic cause",
+                    "Stroke protocol if onset <4.5h and focal signs",
+                    "Disposition: pending imaging + neuro consult criteria",
+                    "Critical care time: clinician to document",
                 ]
             else:
                 self.note.plan = [
                     "Bedside vitals + clinician evaluation",
                     "Targeted history and exam per chief complaint",
-                    "Reassess after focused workup",
+                    "Workup per attending judgment after bedside assessment",
+                    "Disposition: pending workup",
+                    "Critical care time: clinician to document",
                 ]
