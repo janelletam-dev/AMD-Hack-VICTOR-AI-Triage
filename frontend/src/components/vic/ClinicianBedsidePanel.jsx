@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-
-const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
+import { HTTP_BASE } from "../../lib/backend-urls.js";
 
 // Bedside collaboration panel — the clinician working alongside V.I.C.T.O.R.
 // to arrive at the SOAP. The kiosk captures voice triage; this panel captures

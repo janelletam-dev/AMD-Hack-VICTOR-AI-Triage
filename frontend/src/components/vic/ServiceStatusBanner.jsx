@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-
-const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
+import { HTTP_BASE } from "../../lib/backend-urls.js";
 
 export default function ServiceStatusBanner() {
   const [status, setStatus] = useState(null);

@@ -3,8 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { marked } from "marked";
 import TopNav from "../components/vic/TopNav.jsx";
 import { useSessionLog } from "../state/sessionLogStore.js";
-
-const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
+import { HTTP_BASE } from "../lib/backend-urls.js";
 
 // Parse the backend's markdown synchronously. The HTML comes from our own
 // E.L.M.E.R. agent so we don't need a sanitiser here — but if this view

@@ -29,8 +29,7 @@ import {
   setTriageComplete as logTriageComplete,
 } from "../state/sessionLogStore.js";
 
-const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
-const HTTP_BASE = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
+import { HTTP_BASE, WS_BASE } from "../lib/backend-urls.js";
 
 function ageFromDOB(dob) {
   if (!dob) return null;

@@ -26,8 +26,7 @@ import {
   setTriageComplete as logTriageComplete,
   clearSessionLog,
 } from "../state/sessionLogStore.js";
-
-const WS_BASE = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:8000";
+import { HTTP_BASE, WS_BASE } from "../lib/backend-urls.js";
 
 // Demographics on the SOAP card are derived live from captured data —
 // never hardcoded. Anything we don't actually know stays empty (the
@@ -154,8 +153,7 @@ export default function ClinicianDashboard() {
     setPushing(true);
     setPushError(null);
     try {
-      const httpBase = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
-      const r = await fetch(`${httpBase}/api/epic/push`, {
+      const r = await fetch(`${HTTP_BASE}/api/epic/push`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1742,8 +1740,7 @@ function IdentityCard({ identity, flagQueue, transcript, conversationLog, riskSc
     // edit still applies; we just surface a small banner so the clinician
     // knows the server-side log won't reflect this change yet.
     try {
-      const httpBase = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:8000";
-      const r = await fetch(`${httpBase}/api/identity/demo`, {
+      const r = await fetch(`${HTTP_BASE}/api/identity/demo`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next),
