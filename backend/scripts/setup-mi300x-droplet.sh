@@ -90,7 +90,9 @@ docker run -d \
   -p 8000:8000 \
   -v /root/.cache/huggingface:/root/.cache/huggingface \
   -e HF_TOKEN="${HF_TOKEN:-}" \
+  --entrypoint python3 \
   rocm/vllm:latest \
+  -m vllm.entrypoints.openai.api_server \
   --model "${BASE_MODEL}" \
   --served-model-name "${SERVED_NAME}" \
   --enable-lora \
