@@ -396,7 +396,18 @@ export default function ClinicianDashboard() {
       fontFamily: "'Inter', system-ui, sans-serif",
     }}>
       <TopNav activeTab="Patient Queue" urgentOverride={!!flag} />
-      <SideQueue activeId={activeRoom === "demo" ? "macaraeg" : activeRoom} onSelect={setActiveRoom} />
+      {/* Side queue — current live patient at the top (built dynamically
+          from identity + flag + ESI state), mock waiting patients below
+          for demo continuity. Replaces the previous hardcoded
+          R. Macaraeg row that confused live testers when their own data
+          was on the chart but the queue still showed someone else. */}
+      <SideQueue
+        activeId="current"
+        onSelect={setActiveRoom}
+        identity={identity}
+        flagQueue={flagQueue}
+        esi={esi}
+      />
 
       <main style={{
         marginLeft: 320, paddingTop: 80, minHeight: "100vh",

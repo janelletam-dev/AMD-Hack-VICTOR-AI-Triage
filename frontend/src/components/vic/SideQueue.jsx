@@ -1,5 +1,10 @@
-const PATIENTS = [
-  { id: "macaraeg", name: "R. Macaraeg", meta: "M / 59 · Exertion Fatigue", level: "ESCALATED CASE", ago: "2m ago", risk: "CRITICAL RISK" },
+// Mock waiting-room queue used to give the dashboard a sense of being
+// part of a real ED workflow during the demo. The CURRENT patient (the
+// one driving the chart) is computed dynamically and slotted at the top
+// of the queue — so when Janelle runs a session at the kiosk, her chart
+// shows up here as the active case, not the hardcoded R. Macaraeg row
+// the dashboard had during early development.
+const MOCK_WAITING = [
   { id: "jenkins",  name: "S. Jenkins",  meta: "F / 32 · Abdominal Pain",   level: "URGENT",          ago: "14m ago" },
   { id: "henderson",name: "T. Henderson",meta: "M / 19 · Wrist Fracture",   level: "STANDARD",        ago: "28m ago" },
   { id: "martinez", name: "L. Martinez", meta: "F / 45 · Persistent Cough", level: "STANDARD",        ago: "45m ago" },
@@ -11,7 +16,93 @@ const LEVEL_COLOR = {
   "STANDARD":       "var(--vic-secondary)",
 };
 
-export default function SideQueue({ activeId = "macaraeg", onSelect }) {
+function _ageFromDob(dob) {
+  if (!dob || typeof dob !== "string" || dob.length < 4) return null;
+  try {
+    const [y, m, d] = dob.split("-").map(Number);
+    if (!y) return null;
+    const now = new Date();
+    let age = now.getFullYear() - y - ((now.getMonth() + 1, now.getDate()) < (m, d) ? 1 : 0);
+    return age >= 0 && age < 150 ? age : null;
+  } catch { return null; }
+}
+
+function _agoLabel(ts) {
+  if (!ts) return "now";
+  const ms = Date.now() - ts;
+  if (ms < 60_000) return "now";
+  const min = Math.floor(ms / 60_000);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ago`;
+}
+
+function _buildCurrentPatientRow(identity, flagQueue, esi, sessionStartTs) {
+  if (!identity) return null;
+  const { name, dob, gender, complaint, chief_complaint_short } = identity;
+  if (!name && !complaint && !dob) return null;
+
+  // Format name as "F. Lastname" to match the mock queue style — it's
+  // clinically conventional and keeps the row visually balanced with
+  // the others.
+  let displayName = name || "Patient";
+  if (name && name.includes(" ")) {
+    const parts = name.trim().split(/\s+/);
+    const first = parts[0];
+    const last = parts.slice(1).join(" ");
+    displayName = `${first[0]}. ${last}`;
+  }
+
+  const age = _ageFromDob(dob);
+  const sex = gender ? (gender[0] || "").toUpperCase() : null;
+  const ageSex = [sex, age].filter(v => v !== null && v !== undefined && v !== "").join(" / ");
+  const cc = chief_complaint_short || (complaint ? complaint.slice(0, 40) : "Awaiting CC");
+  const meta = ageSex ? `${ageSex} · ${cc}` : cc;
+
+  const adjustedEsi = esi?.victor_esi || esi?.adjusted;
+  const standardEsi = esi?.standard_esi || esi?.standard;
+  const hasFlag = Array.isArray(flagQueue) && flagQueue.length > 0;
+  const escalated = !!(adjustedEsi && standardEsi && adjustedEsi < standardEsi);
+
+  let level = "STANDARD";
+  let risk = null;
+  if (escalated || hasFlag || (adjustedEsi && adjustedEsi <= 2)) {
+    level = "ESCALATED CASE";
+    risk = hasFlag ? "CONCORDANCE FLAG" : "ESI ESCALATED";
+  } else if (adjustedEsi === 3) {
+    level = "URGENT";
+  }
+
+  return {
+    id: "current",
+    name: displayName,
+    meta,
+    level,
+    ago: _agoLabel(sessionStartTs),
+    risk,
+    isCurrent: true,
+  };
+}
+
+export default function SideQueue({
+  activeId = "current",
+  onSelect,
+  currentPatient,
+  identity,
+  flagQueue,
+  esi,
+  sessionStartTs,
+}) {
+  // Build the current-patient row from live state if the caller passed
+  // identity / flagQueue / esi instead of a pre-built row. Either path
+  // works; identity-driven is the new dashboard wiring, the prebuilt
+  // form keeps backwards-compatible callers happy.
+  const computedCurrent = currentPatient || _buildCurrentPatientRow(
+    identity, flagQueue, esi, sessionStartTs
+  );
+  const queue = computedCurrent ? [computedCurrent, ...MOCK_WAITING] : MOCK_WAITING;
+  const waitingCount = queue.length + (computedCurrent ? 8 : 12);
+
   return (
     <aside style={{
       position: "fixed", top: 80, left: 0, bottom: 0, width: 320,
@@ -32,12 +123,12 @@ export default function SideQueue({ activeId = "macaraeg", onSelect }) {
           margin: "4px 0 0", color: "var(--vic-on-surface-variant)",
           fontSize: 11, fontWeight: 500,
         }}>
-          12 Patients Waiting · V.I.C.T.O.R. Active
+          {waitingCount} Patients Waiting · V.I.C.T.O.R. Active
         </p>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "0 12px" }}>
-        {PATIENTS.map((p) => {
+        {queue.map((p) => {
           const isEscalated = p.level === "ESCALATED CASE";
           const isActive = p.id === activeId;
           return (
@@ -69,9 +160,25 @@ export default function SideQueue({ activeId = "macaraeg", onSelect }) {
               )}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
                   color: LEVEL_COLOR[p.level], fontSize: 10, fontWeight: 700,
                   textTransform: "uppercase", letterSpacing: "0.18em",
-                }}>{p.level}</span>
+                }}>
+                  {p.isCurrent && (
+                    <span style={{
+                      width: 6, height: 6, borderRadius: "50%",
+                      background: "var(--vic-primary)",
+                      animation: "ping 2s infinite",
+                    }} />
+                  )}
+                  {p.level}
+                  {p.isCurrent && (
+                    <span style={{
+                      fontSize: 8, color: "var(--vic-primary)",
+                      letterSpacing: "0.1em",
+                    }}>· LIVE</span>
+                  )}
+                </span>
                 <span style={{ color: "var(--vic-on-surface-variant)", fontSize: 10 }}>{p.ago}</span>
               </div>
               <div>
