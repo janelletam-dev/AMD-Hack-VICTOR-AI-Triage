@@ -1,13 +1,18 @@
-# Railway deployment config
-# Backend service — FastAPI via uvicorn
-# Frontend service — Vite static build served by `npm run preview`
-# (Configured per-service in the Railway dashboard.)
+# Railway deployment config (kept in sync with railway.json — the JSON
+# version takes priority on newer Railway versions, this is the
+# fallback). Both files intentionally OMIT a deploy.startCommand so
+# Railway uses the Dockerfile's CMD (which is shell-wrapped via
+# `sh -c`) or nixpacks.toml's [start] cmd (which Nixpacks wraps in a
+# shell automatically). Defining startCommand here passes the value to
+# Railway's runtime as a raw exec without shell expansion, which means
+# `${PORT}` is treated as a literal string and uvicorn errors with
+# "Invalid value for '--port': '$PORT' is not a valid integer."
+# (Bug surfaced 2026-05-07 on Stage 1 deploy.)
 
 [build]
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
