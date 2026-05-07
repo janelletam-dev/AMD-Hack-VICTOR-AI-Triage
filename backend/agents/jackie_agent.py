@@ -210,6 +210,39 @@ class JackieAgent:
             # on the nausea.)" which ElevenLabs would read aloud verbatim. The
             # patient should hear only the actual question.
             text = re.sub(r"\s*\([^)]*\)\s*", " ", text).strip()
+            # Also strip square-bracket asides — same problem class as parens
+            # ("[Acknowledgement: ...]", "[Reasoning: ...]") that some
+            # instruction-tuned models emit alongside or instead of parens.
+            text = re.sub(r"\s*\[[^\]]*\]\s*", " ", text).strip()
+            # Strip imperative meta-instructions where the LLM narrates what
+            # it SHOULD do rather than doing it. Live-test surfaced one
+            # instance where TTS read aloud:
+            #   "...acknowledge and ask her this question..."
+            # Pattern: optional "Let me / I'll / I should / I will / I need to
+            # / I want to" prefix → "acknowledge" → optional "and ask
+            # her/him/them/the patient ..." → terminator (:, ., ?, !).
+            # Strips at start-of-text only so legitimate "I'll ask" phrasings
+            # mid-sentence (rare but possible) aren't caught by accident.
+            text = re.sub(
+                r"^\s*(?:let\s+me\s+|i'?ll\s+|i\s+(?:will|should|need\s+to|want\s+to|am\s+going\s+to)\s+)?"
+                r"acknowledge\b[^?!]{0,200}?"
+                r"(?:and\s+(?:then\s+)?ask\s+(?:her|him|them|the\s+patient)?[^?!]{0,150}?)?"
+                r"[:.?]\s*",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip()
+            # Mirror pattern: turn starts with "Ask her/him/them/the patient"
+            # in third-person — JACKIE always speaks to the patient in second
+            # person ("you/your"), so a third-person imperative at start of a
+            # turn is meta-instruction by definition.
+            text = re.sub(
+                r"^\s*(?:let\s+me\s+|i'?ll\s+|i\s+(?:will|should|need\s+to|want\s+to|am\s+going\s+to)\s+)?"
+                r"ask\s+(?:her|him|them|the\s+patient)\b[^?!]{0,150}?[:.?]\s*",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip()
             # Defensive post-filter: strip the most common therapy-coded
             # opener that the fine-tune still emits even on the base model
             # if the system prompt doesn't quite override it. Catches
