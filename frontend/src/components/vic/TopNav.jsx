@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import AMDStatusPill from "./AMDStatusPill.jsx";
 
 // Route-aware subtitle so the clinician knows which surface they're on
 // at a glance. Replaces the previous static tab strip (Dashboard /
@@ -48,6 +49,7 @@ export default function TopNav({ urgentOverride = true }) {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <AMDStatusPill compact />
         {urgentOverride && (
           <div style={{
             display: "flex", alignItems: "center", gap: 8,

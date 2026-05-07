@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { Clock, MessageCircle, Gauge, Flag, Venus, Mars } from "lucide-react";
 import VoiceSelector from "../components/VoiceSelector.jsx";
+import AMDStatusPill from "../components/vic/AMDStatusPill.jsx";
 import { useWebSocket } from "../hooks/useWebSocket.js";
 import { useAudioCapture } from "../hooks/useAudioCapture.js";
 import { setIdentity as setStoreIdentity, clearIdentity, useIdentity } from "../state/identityStore.js";
@@ -1587,12 +1588,14 @@ function KioskHeader() {
   return (
     <header style={{
       position: "fixed", top: 0, left: 0, right: 0, height: 80,
-      display: "flex", alignItems: "center", justifyContent: "center",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
       padding: "0 32px", zIndex: 50,
       background: "rgba(12, 19, 36, 0.6)",
       backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
       boxShadow: "0 20px 50px rgba(47, 217, 244, 0.08)",
     }}>
+      {/* Spacer keeps the title centered while the AMD pill sits right. */}
+      <span style={{ width: 220 }} />
       <span style={{
         fontFamily: "'Space Grotesk', 'Inter', sans-serif",
         fontSize: 24, fontWeight: 700, letterSpacing: "-0.04em",
@@ -1600,6 +1603,9 @@ function KioskHeader() {
       }}>
         V.I.C.T.O.R. ER Triage
       </span>
+      <div style={{ width: 220, display: "flex", justifyContent: "flex-end" }}>
+        <AMDStatusPill />
+      </div>
     </header>
   );
 }
