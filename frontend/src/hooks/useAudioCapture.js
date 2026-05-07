@@ -52,13 +52,17 @@ class DownsampleProcessor extends AudioWorkletProcessor {
 registerProcessor('downsample-processor', DownsampleProcessor);
 `;
 
-export function useAudioCapture({ onFrame } = {}) {
+export function useAudioCapture({ onFrame, onNoiseLevel } = {}) {
   const [state, setState] = useState("idle"); // idle|requesting|recording|error
   const ctxRef = useRef(null);
   const streamRef = useRef(null);
   const nodeRef = useRef(null);
+  const analyserRef = useRef(null);
+  const noiseLoopRef = useRef(null);
   const onFrameRef = useRef(onFrame);
+  const onNoiseRef = useRef(onNoiseLevel);
   onFrameRef.current = onFrame;
+  onNoiseRef.current = onNoiseLevel;
 
   const start = useCallback(async () => {
     if (state === "recording" || state === "requesting") return;
@@ -94,6 +98,39 @@ export function useAudioCapture({ onFrame } = {}) {
       src.connect(node);
       node.connect(ctx.destination);
       nodeRef.current = node;
+
+      // Real-time noise meter — runs in parallel with the worklet so the
+      // ER kiosk can show ambient noise level proactively (the existing
+      // low-confidence-twice trigger only fires reactively after the
+      // patient already failed to be heard twice). AnalyserNode samples
+      // the POST-suppression signal — anything still loud after the
+      // browser's noise suppression is real residual noise.
+      if (onNoiseRef.current) {
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.85;
+        src.connect(analyser);
+        analyserRef.current = analyser;
+        const buf = new Float32Array(analyser.fftSize);
+        const tick = () => {
+          const a = analyserRef.current;
+          if (!a) return;
+          a.getFloatTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+          const rms = Math.sqrt(sum / buf.length);
+          // dB → 0..1: -60dB (quiet) → 0, 0dB (peak clip) → 1.
+          // ER ambient typically post-suppression sits at -45..-30dB;
+          // patient speaking at conversational distance ~-25..-15dB.
+          const dB = 20 * Math.log10(rms + 1e-9);
+          const norm = Math.max(0, Math.min(1, (dB + 60) / 60));
+          const cb = onNoiseRef.current;
+          if (cb) cb(norm);
+        };
+        // 10Hz update rate — visually smooth without spamming React state.
+        noiseLoopRef.current = setInterval(tick, 100);
+      }
+
       setState("recording");
     } catch (e) {
       console.error("mic error", e);
@@ -102,10 +139,15 @@ export function useAudioCapture({ onFrame } = {}) {
   }, [state]);
 
   const stop = useCallback(() => {
+    if (noiseLoopRef.current) {
+      clearInterval(noiseLoopRef.current);
+      noiseLoopRef.current = null;
+    }
+    analyserRef.current && analyserRef.current.disconnect();
     nodeRef.current && nodeRef.current.disconnect();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     ctxRef.current && ctxRef.current.close();
-    nodeRef.current = streamRef.current = ctxRef.current = null;
+    nodeRef.current = streamRef.current = ctxRef.current = analyserRef.current = null;
     setState("idle");
   }, []);
 

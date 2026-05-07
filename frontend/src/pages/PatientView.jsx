@@ -490,9 +490,30 @@ export default function PatientView() {
   const [triageComplete, setTriageComplete] = useState(false);
   // Patient-safety: triage_emergency event payload, when fired.
   const [emergency, setEmergency] = useState(null);  // { label, severity, matched_phrase }
-  // Noisy environment: track consecutive low-confidence events.
+  // Noisy environment: tracked via TWO signals.
+  //   1. Reactive (lagging): JACKIE returns low-confidence transcripts twice
+  //      in a row → setNoisyEnvironment(true). Fires after the patient has
+  //      already failed to be heard, so it's late.
+  //   2. Proactive (real-time): WebAudio AnalyserNode reads RMS level on
+  //      the post-suppression mic signal at 10Hz. If level is consistently
+  //      loud (> 0.55 on a 0..1 normalised scale) for >2s, we flip the
+  //      noisy state immediately — patient sees the warning before the
+  //      first failed turn. Threshold tuned for ER ambient post-WebRTC NS.
   const [noisyEnvironment, setNoisyEnvironment] = useState(false);
+  const [noiseLevel, setNoiseLevel] = useState(0);  // 0..1, 10Hz
   const lowConfCountRef = useRef(0);
+  const loudSinceRef = useRef(null);
+  const onNoiseLevel = useCallback((level) => {
+    setNoiseLevel(level);
+    const now = Date.now();
+    if (level > 0.55) {
+      if (loudSinceRef.current === null) loudSinceRef.current = now;
+      // Sustained loud for 2s → trigger proactive warning.
+      if (now - loudSinceRef.current > 2000) setNoisyEnvironment(true);
+    } else {
+      loudSinceRef.current = null;
+    }
+  }, []);
   // Processing indicator: "thinking" (LLM composing JACKIE turn) or
   // "got_it" (200ms flash after speech committed) or null.
   const [processingState, setProcessingState] = useState(null);
@@ -840,7 +861,7 @@ export default function PatientView() {
     [sendBinary]
   );
 
-  const { state: micState, start, stop } = useAudioCapture({ onFrame });
+  const { state: micState, start, stop } = useAudioCapture({ onFrame, onNoiseLevel });
 
   const [ttsState, setTtsState] = useState("idle");
 

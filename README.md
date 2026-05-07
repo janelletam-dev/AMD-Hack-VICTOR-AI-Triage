@@ -530,6 +530,33 @@ state.
 
 ---
 
+## Voice isolation in real ED conditions
+
+ED waiting areas are noisy by design — alarms, overhead pages, monitors,
+other patients, family members. A voice-first kiosk that ignores this
+fails silently. V.I.C.T.O.R. uses a layered approach so the patient's
+speech is what reaches the swarm:
+
+| Layer | What it does | Where |
+|---|---|---|
+| **1. Browser/OS noise suppression** | `getUserMedia` constraints request `echoCancellation`, `noiseSuppression`, `autoGainControl`. Chrome runs an RNNoise-trained suppressor; Safari uses Apple's built-in NS; Firefox uses its WebRTC NS. The mic signal reaching V.I.C.T.O.R. is post-suppression. | `useAudioCapture.js` |
+| **2. Echo cancellation** | When the patient hears JACKIE's TTS over speakers (no headphones), the mic can pick up the assistant's voice and Deepgram would transcribe it back. Echo cancellation suppresses the loop. Critical in a kiosk-without-handset configuration. | Same |
+| **3. Real-time noise meter (proactive)** | Web Audio API AnalyserNode samples the post-suppression signal at 10 Hz. If RMS level stays loud (> -33 dB) for >2 seconds, the kiosk fires `noisyEnvironment` and surfaces a warning before the patient's first failed utterance. | `useAudioCapture.js` + `PatientView.jsx` |
+| **4. Reactive low-confidence trigger** | If two consecutive JACKIE turns return low-confidence transcripts (Deepgram couldn't parse cleanly), `noisyEnvironment` flips on. Backstop for cases where the meter says "fine" but speech recognition says otherwise. | `PatientView.jsx` |
+| **5. Type-to-respond fallback** | If audio fails entirely (denied permission, broken mic, room too loud to cope), the `MicErrorHelp` panel offers per-phase text input. Patient still completes triage; voice biomarkers just don't fire that turn. | `PatientView.jsx` |
+
+### V2 — what would close the gap further
+
+For a real ED pilot, three more layers would land:
+
+- **Hardware: directional mic + acoustic shroud / handset.** Cardioid pickup pattern narrows the acceptance angle to ~120°; shroud or phone-style handset adds 10-15 dB of physical isolation. The biggest single win.
+- **Speaker diarization** ([Deepgram natively supports this](https://developers.deepgram.com/docs/diarization)) so the swarm can distinguish patient from companion. Currently the chief-complaint phase captures whoever speaks; diarization would let SCRIBE attribute each utterance correctly and let JACKIE redirect family-answering-for-patient cases automatically.
+- **Real-time noise suppression SDK** ([Krisp](https://krisp.ai/sdk/), [MediaPipe Audio](https://ai.google.dev/edge/mediapipe), [Picovoice Eagle](https://picovoice.ai/platform/eagle/)) for post-WebRTC residual noise. Useful when ER ambient is sustained 80+ dB and WebRTC NS isn't enough.
+
+These are documented as V2 — see Production Roadmap. The current architecture already produces a usable transcript in moderate ER ambient (post-suppression RMS up to ~-30 dB) without modification.
+
+---
+
 ## Concordance engine — eval & false-positive rate
 
 The concordance flag is **conjunctive by design**: a flag fires only when
