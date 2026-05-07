@@ -380,6 +380,19 @@ class ScribeAgent:
                 assess_lines.append(f"CLINICIAN BEDSIDE ASSESSMENT ({attribution}):")
                 assess_lines.append(cl_bedside_assess)
 
+            # Coding placeholder — never emit ICD-10/SNOMED inline. Direct
+            # LLM emission of clinical codes is a known hallucination class
+            # (R07.9 vs I20.9 vs I21.4 for chest-pain syndromes are NOT
+            # interchangeable). V2 verifier (Atgenomix sentence-transformer
+            # embedding lookup against curated CMS ICD-10 table) closes the
+            # loop with verified codes the clinician confirms.
+            assess_lines.append("")
+            assess_lines.append(
+                "Coding: pending clinician verification "
+                "(V2: embedding-verifier suggests ICD-10 codes; "
+                "SNOMED concept tags applied to FHIR Bundle resources)."
+            )
+
             self.note.assessment = "\n".join(assess_lines)
 
         # ── P(lan) — numbered ED workup with disposition + handoff items ──

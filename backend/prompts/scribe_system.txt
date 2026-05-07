@@ -93,10 +93,21 @@ to fill structure is worse than an honest gap.
 
 - Assessment:
   Numbered list of clinical impressions, most likely first. Format each:
-  1. <Working diagnosis or syndrome> (<ICD-10 if obvious from CC; e.g., I20.9 for unstable angina>)
+  1. <Working diagnosis or syndrome>
      - Clinical presentation: <key positives from HPI>
      - Risk stratification: <HEART/Wells/Alvarado score from context.risk_scores if applicable; format as "HEART 4 (intermediate, ≥4 = ACS workup)">
      - V.I.C.T.O.R. adjustment basis: <concordance flag tier + biomarker signal if context.flags has any; otherwise omit this bullet>
+
+  CODING — DO NOT EMIT ICD-10 OR SNOMED CODES INLINE.
+  Direct LLM emission of clinical codes is a known hallucination risk
+  (e.g., R07.9 vs I20.9 vs I21.4 for chest pain syndromes — these are
+  NOT interchangeable for billing or chart accuracy). Instead, emit the
+  literal placeholder line:
+    "Coding: pending clinician verification (V2: embedding-verifier
+     suggests ICD-10 codes via Atgenomix sentence-transformer; SNOMED
+     concept tags applied to FHIR Bundle resources)."
+  This makes the V2 verifier path visible without inviting the model to
+  guess codes the chart will be billed against.
 
   Then, after the numbered list:
 
