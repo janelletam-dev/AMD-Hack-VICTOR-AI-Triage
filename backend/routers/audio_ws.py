@@ -749,8 +749,21 @@ async def audio_ws(
         # orchestrator publishes concordance_flag (with M.E.R.C.E.D. gloss),
         # esi_update, and soap_update events — and emits agent_activity for
         # the swarm panel along the way.
+        #
+        # CRITICAL: evaluate against the FULL patient text (chief complaint
+        # + every patient turn from JACKIE history), not just the latest
+        # final transcript. Live calibration on 2026-05-07 surfaced a silent
+        # miss: the patient said "I don't wanna bother anyone, probably
+        # nothing" in the chief complaint, but by the time biomarkers came
+        # back the latest_final_transcript had rolled to a JACKIE follow-up
+        # answer ("Well, when I see glaring lights..."). The engine was
+        # asymmetric to the biomarker submission (which already used full
+        # text via _full_patient_text), so the conjunction failed even
+        # though both sides of it were present in the session — just not in
+        # the same window. Use the same source as biomarker input.
+        full_patient_text = _full_patient_text(state)
         flags = concordance_engine.evaluate(
-            state["latest_final_transcript"], {"helios": helios_block}
+            full_patient_text, {"helios": helios_block}
         )
         # If any concordance flag fires, mark the session as escalated so
         # subsequent J.A.C.K.I.E. turns use ESCALATED MODE (targeted cardiac
@@ -760,7 +773,7 @@ async def audio_ws(
         await swarm.victor.on_concordance_evaluation(
             room=room,
             flags=flags,
-            transcript=state["latest_final_transcript"],
+            transcript=full_patient_text,
             biomarkers={"helios": helios_block},
             chief_complaint_label=(flags[0].triage_label if flags else None),
             chief_complaint_text=state.get("complaint_text"),

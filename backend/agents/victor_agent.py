@@ -30,6 +30,32 @@ log = logging.getLogger("victor.agent.victor")
 PROMPT = (Path(__file__).parent.parent / "prompts" / "victor_system.txt").read_text()
 
 
+def _utterance_window(transcript: str, phrase: str, radius: int = 200) -> str:
+    """Return a window of ``transcript`` centred on ``phrase`` so the
+    dashboard's gap card can quote the patient WITH the matched phrase
+    visible — not just the last 400 chars (which may be a JACKIE
+    follow-up answer that doesn't contain the minimisation phrase).
+
+    Falls back to the last 400 chars when phrase is empty or not
+    located, preserving the previous behaviour as a safety net.
+    """
+    if not transcript:
+        return ""
+    if not phrase:
+        return transcript[-400:]
+    idx = transcript.lower().find(phrase.lower())
+    if idx == -1:
+        return transcript[-400:]
+    start = max(0, idx - radius)
+    end = min(len(transcript), idx + len(phrase) + radius)
+    snippet = transcript[start:end].strip()
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(transcript):
+        snippet = snippet + "…"
+    return snippet
+
+
 class VictorAgent:
     """The orchestrator — both an agent (makes ESI decisions) and the
     swarm router (delegates to M.E.R.C.E.D., S.C.R.I.B.E., J.A.C.K.I.E.).
@@ -156,12 +182,15 @@ class VictorAgent:
                     "data": {
                         **d,
                         # Concordance Gap context (TrueVoice-style):
-                        # the full patient utterance + the breaching
-                        # biomarker snapshot at the moment the flag
-                        # fired. The dashboard renders these as a
-                        # "quote + matched phrase + voice at this
-                        # moment + clinical note" report.
-                        "utterance_text": (transcript or "")[-400:],
+                        # the patient utterance window centred on the
+                        # matched phrase + the breaching biomarker
+                        # snapshot at the moment the flag fired. The
+                        # dashboard renders these as a "quote + matched
+                        # phrase + voice at this moment + clinical
+                        # note" report.
+                        "utterance_text": _utterance_window(
+                            transcript, d.get("trigger_phrase", "")
+                        ),
                         "biomarker_evidence": breaching,
                         "ts_ms": int(time.time() * 1000),
                         "gloss": gloss_text,
