@@ -259,7 +259,7 @@ export default function ClinicianDashboard() {
     } else if (type === "clinician_addendum") {
       setClinicianAddendum(data);
       if (ts) setLogs(prev => [...prev.slice(-50), {
-        ts, color: "rgb(120, 200, 160)",
+        ts, color: "var(--vic-aligned)",
         text: `CLINICIAN: bedside addendum (${[
           data?.vitals_summary && "vitals",
           data?.physical_exam && "exam",
@@ -272,7 +272,7 @@ export default function ClinicianDashboard() {
       setSoap({ ...data, ready: true });
       logSOAP({ ...data, ready: true });
       if (ts) setLogs(prev => [...prev.slice(-50), {
-        ts, color: "#67e8f9",
+        ts, color: "var(--vic-primary-light)",
         text: "S.C.R.I.B.E.: SOAP note draft updated",
       }]);
     } else if (type === "esi_update") {
@@ -306,7 +306,7 @@ export default function ClinicianDashboard() {
       const name = data?.score || "Risk";
       setRiskScores((prev) => ({ ...prev, [name]: data }));
       if (ts) setLogs(prev => [...prev.slice(-50), {
-        ts, color: "#ffb46f",
+        ts, color: "var(--vic-warning)",
         text: `RISK: ${name} clinical = ${data?.clinical_total ?? "?"}/${data?.max_clinical ?? "?"} — ${data?.interpretation || ""}`,
       }]);
     } else if (type === "jackie_turn") {
@@ -629,7 +629,7 @@ function ActionFooter({ hasSoap, triageComplete, pushing, onApprove, onDowngrade
         style={{
           padding: "14px 28px", borderRadius: 12, border: "none",
           background: (hasSoap && !pushing)
-            ? "linear-gradient(to right, var(--vic-primary), #008ea1)"
+            ? "linear-gradient(to right, var(--vic-primary), var(--vic-primary-deep))"
             : "var(--vic-bg-highest)",
           color: (hasSoap && !pushing) ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)",
           fontFamily: "'Space Grotesk', sans-serif",
@@ -674,11 +674,11 @@ const HELIOS_DISPLAY = [
 // neutral "Awaiting evidence" state pre-ESI so the slot is reserved
 // without showing fabricated levels.
 const ESI_LEVELS = {
-  1: { label: "Resuscitation", color: "var(--vic-error)",  ttb: "Immediate",  description: "Life-threatening — direct to resus bay." },
-  2: { label: "Emergent",      color: "#ff8a4a",            ttb: "<10 min",   description: "High-risk — bed within 10 minutes." },
-  3: { label: "Urgent",        color: "#ffd166",            ttb: "<30 min",   description: "Multiple resources expected; stable." },
-  4: { label: "Less Urgent",   color: "#7ddc91",            ttb: "<60 min",   description: "Single resource; can wait safely." },
-  5: { label: "Non-Urgent",    color: "#5fb6f0",            ttb: "<120 min",  description: "No resources expected; routine." },
+  1: { label: "Resuscitation", color: "var(--vic-error)",    ttb: "Immediate",  description: "Life-threatening — direct to resus bay." },
+  2: { label: "Emergent",      color: "var(--vic-emergent)", ttb: "<10 min",   description: "High-risk — bed within 10 minutes." },
+  3: { label: "Urgent",        color: "var(--vic-urgent)",   ttb: "<30 min",   description: "Multiple resources expected; stable." },
+  4: { label: "Less Urgent",   color: "var(--vic-success)",  ttb: "<60 min",   description: "Single resource; can wait safely." },
+  5: { label: "Non-Urgent",    color: "var(--vic-info)",     ttb: "<120 min",  description: "No resources expected; routine." },
 };
 
 function TriagePriorityCard({ esi, flagQueue }) {
@@ -1001,8 +1001,8 @@ function ConcordanceReport({ flags, biomarkers }) {
   const fg = tone === "danger"
     ? "var(--vic-error)"
     : tone === "warning"
-    ? "#ffb46f"
-    : "rgb(120, 200, 160)";
+    ? "var(--vic-warning)"
+    : "var(--vic-aligned)";
   const border = tone === "danger"
     ? "rgba(255, 100, 100, 0.30)"
     : tone === "warning"
@@ -1097,7 +1097,7 @@ function ConcordanceReport({ flags, biomarkers }) {
       }}>
         <span>architecture: <strong style={{ color: "var(--vic-on-surface)" }}>conjunctive</strong> (minimisation × biomarker breach)</span>
         <span>·</span>
-        <span>stratified eval n=13: <strong style={{ color: "rgb(120, 200, 160)" }}>FPR 0.0%</strong>, sensitivity 100%</span>
+        <span>stratified eval n=13: <strong style={{ color: "var(--vic-aligned)" }}>FPR 0.0%</strong>, sensitivity 100%</span>
         <span>·</span>
         <span style={{ opacity: 0.85 }}>tests/concordance_eval.py</span>
       </div>}
@@ -1139,7 +1139,7 @@ function AlignedExplainer({ biomarkers }) {
         fontSize: 13, lineHeight: 1.55,
         color: "var(--vic-on-surface)",
       }}>
-        <strong style={{ color: "rgb(120, 200, 160)" }}>No concordance gap detected.</strong>{" "}
+        <strong style={{ color: "var(--vic-aligned)" }}>No concordance gap detected.</strong>{" "}
         A flag fires only when <strong>both</strong> conditions are true at the
         same moment:
       </div>
@@ -1186,7 +1186,7 @@ function ConjunctionCheck({ label, examples, met }) {
   // verbal minimisation requires text-pattern matching the engine does
   // server-side; we don't reproduce that here — it's a status panel).
   const icon = met === true ? "✓" : met === false ? "○" : "·";
-  const iconColor = met === true ? "rgb(120, 200, 160)" : met === false ? "var(--vic-on-surface-variant)" : "rgba(47, 217, 244, 0.6)";
+  const iconColor = met === true ? "var(--vic-aligned)" : met === false ? "var(--vic-on-surface-variant)" : "rgba(47, 217, 244, 0.6)";
   return (
     <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
       <span style={{
@@ -1222,12 +1222,12 @@ function ConcordanceGapCard({ flag, index }) {
   const fg = tier === 1
     ? "var(--vic-error)"
     : tier === 2
-    ? "#ffb46f"
+    ? "var(--vic-warning)"
     : "rgba(47, 217, 244, 0.8)";
   return (
     <div style={{
       padding: "12px 14px", borderRadius: 12,
-      border: `1px solid ${fg === "var(--vic-error)" ? "rgba(255, 100, 100, 0.25)" : fg === "#ffb46f" ? "rgba(255, 180, 111, 0.25)" : "rgba(47, 217, 244, 0.18)"}`,
+      border: `1px solid ${fg === "var(--vic-error)" ? "rgba(255, 100, 100, 0.25)" : fg === "var(--vic-warning)" ? "rgba(255, 180, 111, 0.25)" : "rgba(47, 217, 244, 0.18)"}`,
       borderLeftWidth: 4, borderLeftColor: fg,
       background: "rgba(12, 19, 36, 0.4)",
       display: "flex", flexDirection: "column", gap: 10,
@@ -1277,7 +1277,7 @@ function ConcordanceGapCard({ flag, index }) {
         }}>
           MATCHED <span style={{
             color: fg, padding: "1px 6px",
-            background: `${fg.startsWith("var") ? "rgba(255, 100, 100, 0.10)" : fg === "#ffb46f" ? "rgba(255, 180, 111, 0.10)" : "rgba(47, 217, 244, 0.10)"}`,
+            background: `${fg.startsWith("var") ? "rgba(255, 100, 100, 0.10)" : fg === "var(--vic-warning)" ? "rgba(255, 180, 111, 0.10)" : "rgba(47, 217, 244, 0.10)"}`,
             borderRadius: 4, fontStyle: "italic",
           }}>"{matched}"</span>
         </div>
@@ -1339,7 +1339,7 @@ function HighlightedQuote({ text, highlight, fg }) {
       <mark style={{
         background: fg === "var(--vic-error)"
           ? "rgba(255, 100, 100, 0.18)"
-          : fg === "#ffb46f"
+          : fg === "var(--vic-warning)"
           ? "rgba(255, 180, 111, 0.18)"
           : "rgba(47, 217, 244, 0.15)",
         color: fg,
@@ -1360,7 +1360,7 @@ function BiomarkerEvidenceChip({ evidence }) {
   const isCardiacBias = evidence.model === "helios" && (
     evidence.name === "distress" || evidence.name === "lowSelfEsteem"
   );
-  const bar = isCardiacBias ? "var(--vic-error)" : "#ffb46f";
+  const bar = isCardiacBias ? "var(--vic-error)" : "var(--vic-warning)";
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 8,
@@ -1823,7 +1823,7 @@ function BiomarkerBar({ label, value, concerning }) {
         <div style={{
           height: "100%", width: `${pct}%`,
           background: concerning
-            ? "linear-gradient(to right, #ffb46f, var(--vic-error))"
+            ? "linear-gradient(to right, var(--vic-warning), var(--vic-error))"
             : "linear-gradient(to right, var(--vic-primary), #67e8f9)",
           transition: "width 0.4s ease",
         }} />
@@ -2237,7 +2237,7 @@ function IdField({ label, value, primary, wide, original, tone }) {
   const valueColor = tone === "danger"
     ? "var(--vic-error)"
     : tone === "warning"
-    ? "#ffb46f"
+    ? "var(--vic-warning)"
     : primary
     ? "var(--vic-on-surface)"
     : "var(--vic-on-surface-variant)";
@@ -2249,7 +2249,7 @@ function IdField({ label, value, primary, wide, original, tone }) {
         color: tone === "danger"
           ? "var(--vic-error)"
           : tone === "warning"
-          ? "#ffb46f"
+          ? "var(--vic-warning)"
           : "var(--vic-on-surface-variant)",
         textTransform: "uppercase", letterSpacing: "0.18em",
         marginBottom: 4,
@@ -2325,13 +2325,13 @@ function RiskScoreBadge({ data }) {
   const border = tone === "danger"
     ? "var(--vic-error)"
     : tone === "warning"
-    ? "#ffb46f"
+    ? "var(--vic-warning)"
     : "rgba(120, 200, 160, 0.6)";
   const fg = tone === "danger"
     ? "var(--vic-error)"
     : tone === "warning"
-    ? "#ffb46f"
-    : "rgb(120, 200, 160)";
+    ? "var(--vic-warning)"
+    : "var(--vic-aligned)";
   // Per-score breakdown text. HEART has H/A/R components by name;
   // Wells / Alvarado emit a `factors_found` list with point weights.
   // We render a small mono row showing what tripped + what's pending.

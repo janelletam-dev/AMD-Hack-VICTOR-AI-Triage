@@ -16,6 +16,7 @@
 
 /* V.I.C.T.O.R. dark cyan brand */
 :root {
+  /* Surfaces */
   --vic-bg:           #0c1324;
   --vic-bg-low:       #151b2d;
   --vic-bg-mid:       #191f31;
@@ -23,17 +24,50 @@
   --vic-bg-highest:   #2e3447;
   --vic-bg-bright:    #33394c;
   --vic-surface:      #2e3447;
+
+  /* Brand colors */
   --vic-primary:      #2fd9f4;
+  --vic-primary-deep: #008ea1;        /* darker cyan for gradients */
+  --vic-primary-light:#67e8f9;        /* lighter cyan accent */
   --vic-on-primary:   #00363e;
   --vic-secondary:    #c0c1ff;
   --vic-tertiary:     #ffb95f;
+  --vic-warning:      #ffb46f;        /* concordance-flag amber (warning/caution states) */
   --vic-error:        #ffb4ab;
   --vic-error-bg:     #93000a;
   --vic-on-error-bg:  #ffdad6;
+
+  /* Semantic state colors — used by ESI tier tiles, status badges,
+     concordance tone toning, etc. The previous code path inlined these
+     hex values across multiple components; centralising here so the
+     palette can shift in one place. */
+  --vic-emergent:     #ff8a4a;        /* ESI 2 — high-risk, <10 min */
+  --vic-urgent:       #ffd166;        /* ESI 3 — multi-resource, <30 min */
+  --vic-success:      #7ddc91;        /* ESI 4 — single-resource, <60 min; also "good" / aligned */
+  --vic-info:         #5fb6f0;        /* ESI 5 — non-urgent; also informational */
+  --vic-aligned:      rgb(120, 200, 160); /* concordance ALIGNED + clinician-bedside theme */
+  --vic-aligned-deep: rgb(80, 170, 130);  /* darker green for gradients */
+
+  /* Foreground / surface text */
   --vic-on-surface:   #dce1fb;
   --vic-on-surface-variant: #c6c6cd;
   --vic-outline:      #909097;
   --vic-outline-variant: #45464d;
+
+  /* Radius scale — keep rectangular cards on 16, controls on 12,
+     pills on 999, small chips on 8. Using a constrained scale prevents
+     the previous proliferation (4/6/8/10/12/16/999). */
+  --vic-radius-sm:    8px;
+  --vic-radius-md:    12px;
+  --vic-radius-lg:    16px;
+  --vic-radius-pill:  999px;
+
+  /* Spacing scale — same idea. Multiples of 4. */
+  --vic-pad-xs:       4px;
+  --vic-pad-sm:       8px;
+  --vic-pad-md:       14px;
+  --vic-pad-lg:       20px;
+  --vic-pad-xl:       28px;
 }
 
 .font-headline { font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif; }

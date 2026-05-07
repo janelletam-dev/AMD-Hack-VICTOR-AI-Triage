@@ -2,7 +2,7 @@ const AGENTS = [
   { id: "VICTOR",  full: "V.I.C.T.O.R.", role: "Intake Leader",        x: 50, y: 14, color: "var(--vic-primary)",    icon: "📋", size: 88 },
   { id: "ELMER",   full: "E.L.M.E.R.",   role: "Evidence Retrieval",   x: 88, y: 38, color: "var(--vic-secondary)",  icon: "📚", size: 72 },
   { id: "JACKIE",  full: "J.A.C.K.I.E.", role: "Equity Auditor",       x: 70, y: 84, color: "var(--vic-tertiary)",   icon: "⚖",  size: 72 },
-  { id: "SCRIBE",  full: "S.C.R.I.B.E.", role: "Chart Writer",         x: 30, y: 84, color: "#67e8f9",               icon: "✎",  size: 72 },
+  { id: "SCRIBE",  full: "S.C.R.I.B.E.", role: "Chart Writer",         x: 30, y: 84, color: "var(--vic-primary-light)", icon: "✎",  size: 72 },
   { id: "MERCED",  full: "M.E.R.C.E.D.", role: "Resource Dispatcher",  x: 12, y: 38, color: "var(--vic-secondary)",  icon: "🏥", size: 72 },
 ];
 

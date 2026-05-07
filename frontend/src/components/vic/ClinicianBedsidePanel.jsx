@@ -99,7 +99,7 @@ export default function ClinicianBedsidePanel({ room = "demo", onUpdate }) {
         <div>
           <div style={{
             fontSize: 10, fontWeight: 700,
-            color: "rgb(120, 200, 160)",
+            color: "var(--vic-aligned)",
             textTransform: "uppercase", letterSpacing: "0.2em",
           }}>
             Clinician Bedside · collaborate with V.I.C.T.O.R.
@@ -117,7 +117,7 @@ export default function ClinicianBedsidePanel({ room = "demo", onUpdate }) {
           {lastSavedLabel && (
             <span style={{
               fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 10, color: "rgb(120, 200, 160)",
+              fontSize: 10, color: "var(--vic-aligned)",
               letterSpacing: "0.06em",
             }}>
               saved {lastSavedLabel}
@@ -129,7 +129,7 @@ export default function ClinicianBedsidePanel({ room = "demo", onUpdate }) {
               background: "transparent",
               border: "1px solid rgba(120, 200, 160, 0.3)",
               borderRadius: 6, padding: "4px 10px", cursor: "pointer",
-              color: "rgb(120, 200, 160)", fontSize: 10,
+              color: "var(--vic-aligned)", fontSize: 10,
               fontFamily: "'JetBrains Mono', monospace",
               letterSpacing: "0.1em", textTransform: "uppercase",
             }}
@@ -215,7 +215,7 @@ export default function ClinicianBedsidePanel({ room = "demo", onUpdate }) {
                 padding: "10px 22px", borderRadius: 10, border: "none",
                 background: submitting
                   ? "rgba(120, 200, 160, 0.4)"
-                  : "linear-gradient(to right, rgb(120, 200, 160), rgb(80, 170, 130))",
+                  : "linear-gradient(to right, var(--vic-aligned), var(--vic-aligned-deep))",
                 color: "#0c1324",
                 fontWeight: 700, fontSize: 13,
                 cursor: submitting ? "wait" : "pointer",

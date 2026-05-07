@@ -2538,6 +2538,7 @@ function GenderPicker({ onSelect }) {
 
 function MicErrorHelp({ onRetry, onTextSubmit, phase }) {
   const [textInput, setTextInput] = useState("");
+  const [showSteps, setShowSteps] = useState(false);
   const placeholders = {
     first_name: "Type your first name here...",
     last_name: "Type your last name here...",
@@ -2557,7 +2558,7 @@ function MicErrorHelp({ onRetry, onTextSubmit, phase }) {
         We couldn't access your microphone. You can either allow microphone
         access in your browser settings, or type your response below.
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button
           onClick={onRetry}
           style={{
@@ -2570,7 +2571,60 @@ function MicErrorHelp({ onRetry, onTextSubmit, phase }) {
         >
           Try mic again
         </button>
+        <button
+          onClick={() => setShowSteps((s) => !s)}
+          style={{
+            padding: "8px 14px", borderRadius: 999,
+            background: "transparent", color: "var(--vic-on-error-bg)",
+            border: "1px solid rgba(255, 180, 171, 0.35)", cursor: "pointer",
+            fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 600,
+          }}
+        >
+          {showSteps ? "▾ hide steps" : "▸ how to enable"}
+        </button>
       </div>
+      {showSteps && (
+        <div style={{
+          padding: "12px 14px", borderRadius: 10,
+          background: "rgba(12, 19, 36, 0.55)",
+          border: "1px solid rgba(255, 180, 171, 0.18)",
+          fontSize: 12, lineHeight: 1.55,
+          color: "var(--vic-on-surface)",
+          display: "flex", flexDirection: "column", gap: 10,
+        }}>
+          <BrowserSteps
+            label="Chrome / Edge"
+            steps={[
+              "Click the camera/mic icon in the address bar (right of the URL).",
+              "Choose Allow / Always allow on this site.",
+              "Refresh the page, then tap Try mic again.",
+            ]}
+          />
+          <BrowserSteps
+            label="Safari"
+            steps={[
+              "Safari menu → Settings → Websites → Microphone.",
+              "Set this site to Allow.",
+              "Refresh the page, then tap Try mic again.",
+            ]}
+          />
+          <BrowserSteps
+            label="Firefox"
+            steps={[
+              "Click the lock icon in the address bar.",
+              "Open Connection secure → More information → Permissions.",
+              "Set Use the Microphone to Allow, then refresh + Try mic again.",
+            ]}
+          />
+          <div style={{
+            fontSize: 11, color: "var(--vic-on-surface-variant)",
+            fontStyle: "italic", marginTop: 2,
+          }}>
+            If you previously denied permission, the browser may have remembered the choice — these steps reset it.
+          </div>
+        </div>
+      )}
       <div style={{
         display: "flex", gap: 8, marginTop: 8,
         borderTop: "1px solid rgba(255, 180, 171, 0.15)", paddingTop: 12,
@@ -2608,6 +2662,35 @@ function MicErrorHelp({ onRetry, onTextSubmit, phase }) {
           Send
         </button>
       </div>
+    </div>
+  );
+}
+
+// One block of browser-specific microphone-permission instructions inside
+// the MicErrorHelp recovery card. Doesn't auto-detect the browser — shows
+// all three so the patient can find the one matching what they're using
+// (auto-detection would silently mislead users on edge browsers like
+// Brave / Vivaldi / DuckDuckGo).
+function BrowserSteps({ label, steps }) {
+  return (
+    <div>
+      <div style={{
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 10, fontWeight: 700, letterSpacing: "0.14em",
+        textTransform: "uppercase",
+        color: "var(--vic-on-error-bg)", opacity: 0.85,
+        marginBottom: 4,
+      }}>
+        {label}
+      </div>
+      <ol style={{
+        margin: 0, paddingLeft: 18, lineHeight: 1.55,
+        color: "var(--vic-on-surface-variant)",
+      }}>
+        {steps.map((step, i) => (
+          <li key={i} style={{ marginBottom: 2 }}>{step}</li>
+        ))}
+      </ol>
     </div>
   );
 }

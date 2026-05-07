@@ -53,7 +53,7 @@ export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum
               border: "1px solid rgba(120, 200, 160, 0.35)",
               fontFamily: "'JetBrains Mono', monospace",
               fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
-              color: "rgb(120, 200, 160)", fontWeight: 700,
+              color: "var(--vic-aligned)", fontWeight: 700,
             }}>
               Co-authored · V.I.C.T.O.R. + {clinicianName || "Clinician"}
             </span>
