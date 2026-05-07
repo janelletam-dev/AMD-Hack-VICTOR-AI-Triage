@@ -961,6 +961,15 @@ function ScientificBasisCard() {
 // anything" instead of an empty space they have to interpret.
 function ConcordanceReport({ flags, biomarkers }) {
   const list = Array.isArray(flags) ? flags : [];
+  // Collapsed by default when ALIGNED (low-signal, just confirms nothing
+  // wrong) — expanded by default when flags fire (the demo moment).
+  // Clinician can override either way.
+  const [expanded, setExpanded] = useState(list.length > 0);
+  // Re-expand if flags arrive while collapsed — the dashboard should never
+  // hide a fresh concordance gap from the clinician.
+  useEffect(() => {
+    if (list.length > 0) setExpanded(true);
+  }, [list.length]);
   // Score: each flag contributes (1 / tier) * 30 + 5 per breaching
   // axis it cites, capped at 100. Tier 1 (most concerning) weighs
   // most. This is a UX rollup, not a clinical scale — labelled as
@@ -997,26 +1006,42 @@ function ConcordanceReport({ flags, biomarkers }) {
     <section className="vic-glass" style={{
       padding: 20, borderRadius: 16,
       border: `1px solid ${border}`,
-      display: "flex", flexDirection: "column", gap: 14,
+      display: "flex", flexDirection: "column", gap: expanded ? 14 : 0,
     }}>
-      <div style={{
-        display: "flex", justifyContent: "space-between",
-        alignItems: "center", flexWrap: "wrap", gap: 12,
-      }}>
-        <div>
-          <div style={{
-            fontSize: 10, fontWeight: 700,
-            color: "rgba(47, 217, 244, 0.8)",
-            textTransform: "uppercase", letterSpacing: "0.2em",
-          }}>
-            Concordance Report · M.E.R.C.E.D.
-          </div>
-          <div style={{
-            fontSize: 9, fontWeight: 500, marginTop: 2,
-            color: "var(--vic-on-surface-variant)", opacity: 0.6,
-            fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
-          }}>
-            verbal–acoustic mismatch detection · last 60s window
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          background: "transparent", border: "none", padding: 0,
+          width: "100%", cursor: "pointer",
+          display: "flex", justifyContent: "space-between",
+          alignItems: "center", flexWrap: "wrap", gap: 12,
+          textAlign: "left",
+        }}
+        aria-expanded={expanded}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+            color: "var(--vic-primary)",
+            transform: expanded ? "rotate(90deg)" : "none",
+            transition: "transform 0.15s",
+            display: "inline-block",
+          }}>▸</span>
+          <div>
+            <div style={{
+              fontSize: 10, fontWeight: 700,
+              color: "rgba(47, 217, 244, 0.8)",
+              textTransform: "uppercase", letterSpacing: "0.2em",
+            }}>
+              Concordance Report · M.E.R.C.E.D.
+            </div>
+            <div style={{
+              fontSize: 9, fontWeight: 500, marginTop: 2,
+              color: "var(--vic-on-surface-variant)", opacity: 0.6,
+              fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
+            }}>
+              verbal–acoustic mismatch detection · last 60s window
+            </div>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -1037,8 +1062,8 @@ function ConcordanceReport({ flags, biomarkers }) {
             </div>
           )}
         </div>
-      </div>
-      {list.length === 0 ? (
+      </button>
+      {expanded && (list.length === 0 ? (
         <AlignedExplainer biomarkers={biomarkers} />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1050,13 +1075,13 @@ function ConcordanceReport({ flags, biomarkers }) {
             />
           ))}
         </div>
-      )}
+      ))}
       {/* Architecture receipt — answers "what's your false positive rate?"
           on the live dashboard, sourced from backend/tests/concordance_eval.py.
           Conjunctive design: a flag requires BOTH minimisation phrase AND
           biomarker breach. Direct speech with elevated stress alone never
           fires — see eval cohort B (70-year-old-white-man typical ACS). */}
-      <div style={{
+      {expanded && <div style={{
         marginTop: 4, paddingTop: 10,
         borderTop: "1px dashed rgba(47, 217, 244, 0.15)",
         fontFamily: "'JetBrains Mono', monospace",
@@ -1069,7 +1094,7 @@ function ConcordanceReport({ flags, biomarkers }) {
         <span>stratified eval n=13: <strong style={{ color: "rgb(120, 200, 160)" }}>FPR 0.0%</strong>, sensitivity 100%</span>
         <span>·</span>
         <span style={{ opacity: 0.85 }}>tests/concordance_eval.py</span>
-      </div>
+      </div>}
     </section>
   );
 }
@@ -1367,27 +1392,74 @@ function BiomarkerCard({ data, unavailable }) {
   const hasAny = HELIOS_DISPLAY.some((f) => typeof h[f.key] === "number");
   // All zeros from Thymia = silent failure. Show unavailable message.
   const allZeros = hasAny && HELIOS_DISPLAY.every((f) => (h[f.key] || 0) === 0);
+  // Collapsed by default until biomarkers actually arrive — saves a lot
+  // of vertical space pre-session. Auto-expands when a real reading
+  // lands so the clinician sees the data without an extra click.
+  const [expanded, setExpanded] = useState(hasAny && !allZeros);
+  useEffect(() => {
+    if (hasAny && !allZeros) setExpanded(true);
+  }, [hasAny, allZeros]);
+
+  // One-line summary for the collapsed header so the clinician sees the
+  // biomarker headline number without expanding.
+  const summaryParts = [];
+  if (typeof h.stress === "number") summaryParts.push(`stress ${h.stress.toFixed(2)}`);
+  if (typeof h.distress === "number") summaryParts.push(`distress ${h.distress.toFixed(2)}`);
+  const summary = summaryParts.length
+    ? summaryParts.join(" · ")
+    : unavailable
+    ? "data unavailable"
+    : "awaiting voice sample";
+
   return (
     <section className="vic-glass" style={{
       padding: 20, borderRadius: 16,
       border: `1px solid ${unavailable || allZeros ? "rgba(255, 185, 95, 0.25)" : "rgba(47, 217, 244, 0.15)"}`,
-      display: "flex", flexDirection: "column", gap: 14,
+      display: "flex", flexDirection: "column", gap: expanded ? 14 : 0,
     }}>
-      <div style={{
-        fontSize: 10, fontWeight: 700,
-        color: unavailable || allZeros ? "rgba(255, 185, 95, 0.8)" : "rgba(47, 217, 244, 0.8)",
-        textTransform: "uppercase", letterSpacing: "0.2em",
-      }}>
-        Voice Biomarkers · thymia
-      </div>
-      <div style={{
-        fontSize: 9, fontWeight: 500, marginTop: -10,
-        color: "var(--vic-on-surface-variant)", opacity: 0.6,
-        fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
-      }}>
-        Acoustic biomarker analysis · ≥15s validated · Helios + Apollo + Psyche
-      </div>
-      {unavailable || allZeros ? (
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          background: "transparent", border: "none", padding: 0, width: "100%",
+          cursor: "pointer", textAlign: "left",
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+        }}
+        aria-expanded={expanded}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+            color: "var(--vic-primary)",
+            transform: expanded ? "rotate(90deg)" : "none",
+            transition: "transform 0.15s",
+            display: "inline-block",
+          }}>▸</span>
+          <div>
+            <div style={{
+              fontSize: 10, fontWeight: 700,
+              color: unavailable || allZeros ? "rgba(255, 185, 95, 0.8)" : "rgba(47, 217, 244, 0.8)",
+              textTransform: "uppercase", letterSpacing: "0.2em",
+            }}>
+              Voice Biomarkers · thymia
+            </div>
+            <div style={{
+              fontSize: 9, fontWeight: 500, marginTop: 2,
+              color: "var(--vic-on-surface-variant)", opacity: 0.6,
+              fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em",
+            }}>
+              Acoustic biomarker analysis · ≥15s validated · Helios + Apollo + Psyche
+            </div>
+          </div>
+        </div>
+        <span style={{
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 11,
+          color: "var(--vic-on-surface-variant)", opacity: 0.85,
+          letterSpacing: "0.04em",
+        }}>
+          {summary}
+        </span>
+      </button>
+      {expanded && (unavailable || allZeros ? (
         <div style={{
           fontSize: 13, fontWeight: 500,
           color: "rgba(255, 185, 95, 0.9)",
@@ -1462,7 +1534,7 @@ function BiomarkerCard({ data, unavailable }) {
           )}
           <BiomarkerMethodology />
         </>
-      )}
+      ))}
     </section>
   );
 }
