@@ -98,7 +98,7 @@ export default function EvidenceReport() {
         maxWidth: 960, margin: "0 auto",
         padding: isDark ? "104px 24px 96px" : "56px 24px 96px",
       }}>
-        <Header onBack={() => navigate("/clinician/epic")} t={t} />
+        <Header onBack={() => navigate("/clinician")} t={t} />
 
         {sessionLog.emergency && (
           <EmergencyBanner emergency={sessionLog.emergency} t={t} />
@@ -216,7 +216,7 @@ function Header({ onBack, t }) {
             fontFamily: "'Space Grotesk', sans-serif",
           }}
         >
-          ← Back to Epic Workspace
+          ← Back to Triage Workspace
         </button>
       </div>
     </div>
