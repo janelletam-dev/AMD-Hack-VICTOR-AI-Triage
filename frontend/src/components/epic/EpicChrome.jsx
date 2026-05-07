@@ -2,7 +2,7 @@ export function EpicTitleBar() {
   return (
     <>
       <div className="epic-titlebar">
-        <span style={{ fontWeight: 600, letterSpacing: 0.2 }}>VICTOR</span>
+        <span style={{ fontWeight: 600, letterSpacing: 0.2 }}>V.I.C.T.O.R.</span>
         <span className="lozenge">Triage Workspace</span>
         <span style={{ opacity: 0.85 }}>— Mercy Hospital Springfield · ED Track 2</span>
         <span style={{ marginLeft: "auto", opacity: 0.85 }}>
@@ -38,7 +38,7 @@ export function EpicPatientBanner({ patient, esi }) {
               background: "var(--epic-flag-bg)", border: "1px solid var(--epic-flag-bd)",
               padding: "1px 6px", borderRadius: 2, fontWeight: 600, color: "#5a0e0a", fontSize: 11,
             }}>
-              VICTOR Re-Triage: ESI {std} → {adj}
+              V.I.C.T.O.R. Re-Triage: ESI {std} → {adj}
             </span>
           )}
         </div>
@@ -116,7 +116,7 @@ export function EpicToolbar({ onRunDemo, running }) {
       <Tool label="Reg Doc" icon={<ToolIcon path="M4 2h6l2 2v10H4z M6 6h4 M6 9h4 M6 12h2" />} active />
       <Tool label="Graph" icon={<ToolIcon path="M2 13h12 M4 11l3-4 2 2 4-6" />} />
       <div className="epic-tool-sep" />
-      <Tool label="VICTOR" icon={<VictorIcon />} />
+      <Tool label="V.I.C.T.O.R." icon={<VictorIcon />} />
       <Tool label="Concord." icon={<ToolIcon path="M3 8l3 3 7-7" />} />
       <Tool label="Biomark." icon={<ToolIcon path="M2 12c2-4 3-4 4 0s2 4 4 0 3-4 4 0" />} />
       <Tool label="Listen" icon={<ToolIcon path="M5 6v4 M8 4v8 M11 6v4" />} />
@@ -147,14 +147,14 @@ const RAIL_ITEMS = [
   ["Summary", "S"], ["Flowsheets", "F"], ["Manage Orders", "O"], ["Care Plan", "C"],
   ["Education", "E"], ["Notes", "N"], ["Results Review", "R"], ["Chart Review", "C"],
   ["History", "H"], ["Demographics", "D"], ["SnapShot", "S"], ["Review Flows", "R"],
-  ["Order Review", "O"], ["Pathway Rev.", "P"], ["VICTOR Triage", "V"],
+  ["Order Review", "O"], ["Pathway Rev.", "P"], ["V.I.C.T.O.R. Triage", "V"],
 ];
 
 export function EpicRail() {
   return (
     <div className="epic-rail">
       {RAIL_ITEMS.map(([label, glyph]) => {
-        const active = label === "VICTOR Triage";
+        const active = label === "V.I.C.T.O.R. Triage";
         return (
           <div key={label} className={"item" + (active ? " active" : "")}>
             <div className="ico">{glyph}</div>
@@ -173,7 +173,7 @@ export function EpicStatusBar() {
       <span>·</span>
       <span>ED Track 2</span>
       <span>·</span>
-      <span style={{ color: "#1f4d22" }}>● VICTOR connected</span>
+      <span style={{ color: "#1f4d22" }}>● V.I.C.T.O.R. connected</span>
       <span style={{ marginLeft: "auto" }}>v1.4.2 · build 2026.05.04</span>
     </div>
   );

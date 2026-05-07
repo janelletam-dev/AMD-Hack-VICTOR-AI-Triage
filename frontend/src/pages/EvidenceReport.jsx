@@ -546,7 +546,7 @@ function ActionFooter({ approved, ready, onApprove, t, isDark }) {
           color: t.approvedColor, fontSize: 13, marginLeft: 4,
           fontFamily: "'JetBrains Mono', monospace",
         }}>
-          Mock action — no live EHR connection. See VICTOR_PRD.md §15.
+          Approval recorded locally. The live EHR push happens via the dashboard's "Approve & Push to Epic" — see Production Roadmap.
         </span>
       )}
     </div>

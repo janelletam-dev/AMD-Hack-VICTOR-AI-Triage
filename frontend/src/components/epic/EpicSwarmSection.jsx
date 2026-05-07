@@ -20,7 +20,7 @@ export default function EpicSwarmSection({ activity = {}, logs = [] }) {
   return (
     <div className="epic-section">
       <div className="epic-band">
-        <span>VICTOR Agent Swarm</span>
+        <span>V.I.C.T.O.R. Agent Swarm</span>
         <span className="meta">{activeCount} active</span>
       </div>
 

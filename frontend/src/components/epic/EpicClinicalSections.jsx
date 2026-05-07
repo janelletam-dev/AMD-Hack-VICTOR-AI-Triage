@@ -2,7 +2,7 @@ export function EpicConcordanceSection({ flag }) {
   return (
     <div className="epic-section">
       <div className="epic-band">
-        <span>VICTOR Concordance Flag</span>
+        <span>V.I.C.T.O.R. Concordance Flag</span>
         <span className="meta">
           {flag ? `Tier ${flag.tier} · ${flag.agent || "M.E.R.C.E.D."}` : "Awaiting evaluation"}
         </span>
@@ -48,7 +48,7 @@ export function EpicESISection({ esi }) {
     <div className="epic-section">
       <div className="epic-band">
         <span>ESI Acuity</span>
-        <span className="meta">Standard vs VICTOR-adjusted</span>
+        <span className="meta">Standard vs V.I.C.T.O.R.-adjusted</span>
       </div>
       <div className="epic-row">
         <div className="k">Standard ESI</div>
@@ -58,7 +58,7 @@ export function EpicESISection({ esi }) {
         </div>
       </div>
       <div className="epic-row" style={{ background: changed ? "#fff7d6" : undefined }}>
-        <div className="k" style={{ background: changed ? "#fff7d6" : undefined }}>VICTOR-adjusted ESI</div>
+        <div className="k" style={{ background: changed ? "#fff7d6" : undefined }}>V.I.C.T.O.R.-adjusted ESI</div>
         <div className="v">
           <span style={{
             fontFamily: "'JetBrains Mono',monospace", fontSize: 14, fontWeight: 700,

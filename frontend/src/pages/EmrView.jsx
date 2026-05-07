@@ -176,8 +176,22 @@ export default function EmrView() {
                 ← Back to Triage Workspace
               </button>
               <div style={{ display: "flex", gap: 6 }}>
-                <button className="epic-btn">Edit</button>
-                <button className="epic-btn">Defer to RN</button>
+                <button
+                  className="epic-btn"
+                  disabled
+                  title="V2 — not yet wired. The note can be edited from the live triage workspace via the Edit Note button."
+                  style={{ opacity: 0.5, cursor: "not-allowed" }}
+                >
+                  Edit
+                </button>
+                <button
+                  className="epic-btn"
+                  disabled
+                  title="V2 — not yet wired. RN escalation/reassignment workflow is on the V2 roadmap."
+                  style={{ opacity: 0.5, cursor: "not-allowed" }}
+                >
+                  Defer to RN
+                </button>
                 <button
                   className="epic-btn primary"
                   onClick={() => navigate("/clinician/report")}
@@ -304,7 +318,7 @@ function PostedToEpicBanner({ receipt, room, dark }) {
 function LightTitleBar() {
   return (
     <div className="epic-titlebar">
-      <span style={{ fontWeight: 600 }}>VICTOR</span>
+      <span style={{ fontWeight: 600 }}>V.I.C.T.O.R.</span>
       <span className="lozenge">Triage Workspace</span>
       <span style={{ marginLeft: "auto" }}>Mercy Hospital Springfield · ED Track 2</span>
       <span>Dr. Reyes, A.</span>
