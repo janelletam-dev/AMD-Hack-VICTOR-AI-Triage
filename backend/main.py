@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
-from routers import audio_ws, epic, health, reports, tts
+from routers import audio_ws, clinician, epic, health, reports, tts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,6 +77,7 @@ app.add_middleware(
 )
 
 app.include_router(audio_ws.router)
+app.include_router(clinician.router)
 app.include_router(epic.router)
 app.include_router(health.router)
 app.include_router(reports.router)

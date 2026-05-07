@@ -6,6 +6,7 @@ import SideQueue from "../components/vic/SideQueue.jsx";
 import OverrideBanner from "../components/vic/OverrideBanner.jsx";
 import ServiceStatusBanner from "../components/vic/ServiceStatusBanner.jsx";
 import SOAPCard from "../components/vic/SOAPCard.jsx";
+import ClinicianBedsidePanel from "../components/vic/ClinicianBedsidePanel.jsx";
 import SwarmPanel from "../components/vic/SwarmPanel.jsx";
 import { DEMO_EVENTS, DEMO_PATIENT } from "../components/epic/demoEvents.js";
 import {
@@ -113,6 +114,11 @@ export default function ClinicianDashboard() {
   const [soap, setSoap] = useState(null);
   const [esi, setEsi] = useState(null);
   const [nurseEsi, setNurseEsi] = useState(null);
+  // Clinician bedside addendum — kept in dashboard state so the SOAPCard
+  // can highlight which sections came from the bedside provider vs the
+  // V.I.C.T.O.R. swarm. Populated by clinician_addendum events from the
+  // bus AND the local optimistic update from ClinicianBedsidePanel.
+  const [clinicianAddendum, setClinicianAddendum] = useState(null);
   // Identity comes from the in-memory store so navigating between views keeps it.
   const identity = useIdentity();
   const [agentActivity, setAgentActivity] = useState({});
@@ -218,6 +224,18 @@ export default function ClinicianDashboard() {
       if (ts) setLogs(prev => [...prev.slice(-50), {
         ts, color: data.status === "abandoned" ? "var(--vic-error)" : "var(--vic-on-surface-variant)",
         text: `SESSION: ${data.status} — ${data.reason || ""}`,
+      }]);
+    } else if (type === "clinician_addendum") {
+      setClinicianAddendum(data);
+      if (ts) setLogs(prev => [...prev.slice(-50), {
+        ts, color: "rgb(120, 200, 160)",
+        text: `CLINICIAN: bedside addendum (${[
+          data?.vitals_summary && "vitals",
+          data?.physical_exam && "exam",
+          data?.additional_history && "hx",
+          data?.bedside_assessment && "assessment",
+          (data?.plan_addendum && data.plan_addendum.length) && `${data.plan_addendum.length} plan items`,
+        ].filter(Boolean).join(", ") || "saved"})`,
       }]);
     } else if (type === "soap_update") {
       setSoap({ ...data, ready: true });
@@ -424,7 +442,20 @@ export default function ClinicianDashboard() {
                 away. Keeps the chart header scannable without losing
                 medico-legal traceability. */}
 
-            <SOAPCard soap={soap} demographics={buildDemographics(identity, flagQueue)} />
+            {/* Clinician bedside collaboration — vitals, exam, additional
+                history, working differential, plan additions. The patient
+                kiosk captures voice triage; this panel captures what only
+                the bedside provider can. POST /api/clinician/addendum
+                triggers SCRIBE to recompose the SOAP with these inputs
+                folded in, so V.I.C.T.O.R. + clinician arrive at the chart
+                collaboratively. The SOAPCard below visibly updates when
+                the clinician saves. */}
+            <ClinicianBedsidePanel
+              room={activeRoom}
+              onUpdate={(newSoap) => setSoap({ ...newSoap, ready: true })}
+            />
+
+            <SOAPCard soap={soap} demographics={buildDemographics(identity, flagQueue)} clinicianAddendum={clinicianAddendum} />
 
             <ActionFooter
               hasSoap={!!soap}

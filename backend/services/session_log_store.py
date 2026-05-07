@@ -59,6 +59,22 @@ class SessionLog:
     # the EMR view can show a "Posted at …" banner without re-fetching
     # the full FHIR document.
     epic_push: dict[str, Any] | None = None
+    # Bedside data the kiosk cannot capture — vitals, physical exam,
+    # additional history, and clinician's bedside assessment + plan
+    # additions. Populated via POST /api/clinician/addendum from the
+    # dashboard. SCRIBE merges this into the SOAP so V.I.C.T.O.R. and
+    # the clinician arrive at the chart collaboratively. Schema:
+    #   {
+    #     "vitals": {"bp": "142/88", "hr": "94", "rr": "18", "spo2": "96",
+    #                "temp": "98.4", "pain": "6"},
+    #     "physical_exam": "<free text or by-system>",
+    #     "additional_history": "<anything kiosk missed>",
+    #     "bedside_assessment": "<clinician's working differential>",
+    #     "plan_addendum": ["<extra plan items>"],
+    #     "updated_at": <epoch s>,
+    #     "clinician": "<name or role, optional>"
+    #   }
+    clinician_addendum: dict[str, Any] | None = None
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -74,6 +90,7 @@ class SessionLog:
             "emergency": self.emergency,
             "triage_complete": self.triage_complete,
             "epic_push": self.epic_push,
+            "clinician_addendum": self.clinician_addendum,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
         }

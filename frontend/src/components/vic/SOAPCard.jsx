@@ -1,9 +1,34 @@
-export default function SOAPCard({ soap, vitals, demographics }) {
+export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum }) {
+  // The clinician addendum can come either as a prop (fresh from
+  // /api/clinician/addendum POST) or be embedded in the SOAP text via
+  // SCRIBE's "(Clinician: ...)" attribution markers. Render a subtle
+  // "Co-authored" banner when either signal is present so the chart
+  // reader can see at a glance that V.I.C.T.O.R. + the clinician both
+  // contributed to this chart, without having to scan attribution lines.
+  const subjectiveText = soap?.subjective || "";
+  const objectiveText = soap?.objective || "";
+  const assessmentText = soap?.assessment || "";
+  const planList = soap?.plan || [];
+  const hasClinicianMarker = (
+    /\(Clinician/i.test(subjectiveText)
+    || /\(Clinician/i.test(objectiveText)
+    || /\(Clinician/i.test(assessmentText)
+    || planList.some(p => /^\(Clinician\)/i.test(p))
+  );
+  const hasAddendum = !!(
+    clinicianAddendum?.vitals_summary
+    || clinicianAddendum?.physical_exam
+    || clinicianAddendum?.additional_history
+    || clinicianAddendum?.bedside_assessment
+    || (clinicianAddendum?.plan_addendum && clinicianAddendum.plan_addendum.length)
+  );
+  const coAuthored = hasClinicianMarker || hasAddendum;
+  const clinicianName = (clinicianAddendum?.clinician || "").trim();
   return (
     <section style={{
       background: "var(--vic-bg-low)",
       borderRadius: 16,
-      border: "1px solid rgba(69, 70, 77, 0.15)",
+      border: `1px solid ${coAuthored ? "rgba(120, 200, 160, 0.25)" : "rgba(69, 70, 77, 0.15)"}`,
       overflow: "hidden",
     }}>
       <div style={{
@@ -11,7 +36,7 @@ export default function SOAPCard({ soap, vitals, demographics }) {
         padding: "18px 28px", background: "var(--vic-bg-mid)",
         borderBottom: "1px solid rgba(69, 70, 77, 0.18)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ color: "var(--vic-primary)", fontSize: 18 }}>📋</span>
           <h3 style={{
             margin: 0, fontFamily: "'Space Grotesk', sans-serif",
@@ -20,6 +45,19 @@ export default function SOAPCard({ soap, vitals, demographics }) {
           }}>
             S.C.R.I.B.E. Automated SOAP Note
           </h3>
+          {coAuthored && (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "3px 10px", borderRadius: 999,
+              background: "rgba(120, 200, 160, 0.12)",
+              border: "1px solid rgba(120, 200, 160, 0.35)",
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
+              color: "rgb(120, 200, 160)", fontWeight: 700,
+            }}>
+              Co-authored · V.I.C.T.O.R. + {clinicianName || "Clinician"}
+            </span>
+          )}
         </div>
         <span style={{
           fontSize: 10, fontWeight: 700, color: "var(--vic-on-surface-variant)",

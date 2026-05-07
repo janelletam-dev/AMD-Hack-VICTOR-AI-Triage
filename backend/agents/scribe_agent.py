@@ -232,6 +232,18 @@ class ScribeAgent:
         pert_negs = context.get("pertinent_negatives") or []
         gender = context.get("gender")
         age = context.get("age")
+        # Bedside clinician addendum — vitals, exam, additional history,
+        # bedside differential, plan additions. When present, replaces
+        # the "[Bedside reassessment required]" placeholders with real
+        # findings and tags clinician-attributed sections so the chart
+        # reader can see who contributed what.
+        addendum = context.get("clinician_addendum") or {}
+        cl_vitals_summary = (addendum.get("vitals_summary") or "").strip()
+        cl_physical_exam = (addendum.get("physical_exam") or "").strip()
+        cl_additional_hx = (addendum.get("additional_history") or "").strip()
+        cl_bedside_assess = (addendum.get("bedside_assessment") or "").strip()
+        cl_plan_addendum = addendum.get("plan_addendum") or []
+        cl_name = (addendum.get("clinician") or "").strip()
 
         # ── S(ubjective) — ED-grade structured HPI ────────────────────────
         # Mirrors the prompt's section markers so the offline backfill
@@ -273,6 +285,11 @@ class ScribeAgent:
                     + ", ".join(str(n) for n in pert_negs[:10])
                     + "."
                 )
+            if cl_additional_hx:
+                lines.append("")
+                attribution = f" (Clinician: {cl_name})" if cl_name else " (Clinician)"
+                lines.append(f"ADDITIONAL HISTORY{attribution}:")
+                lines.append(cl_additional_hx)
             self.note.subjective = "\n".join(lines)[: self.MAX_SUBJECTIVE_CHARS]
 
         # ── O(bjective) — voice biomarkers + explicit bedside placeholders ──
@@ -288,10 +305,19 @@ class ScribeAgent:
                     v = helios.get(k)
                     if isinstance(v, (int, float)):
                         parts.append(f"{k} {v:.2f} ({bucket_label(v)})")
-            obj_lines = [
-                "VITAL SIGNS: [Bedside reassessment required]",
-                "PHYSICAL EXAMINATION: [Clinician to complete at bedside]",
-            ]
+            attribution = f" (Clinician: {cl_name})" if cl_name else " (Clinician)"
+            if cl_vitals_summary:
+                obj_lines = [f"VITAL SIGNS{attribution}: {cl_vitals_summary}"]
+            else:
+                obj_lines = ["VITAL SIGNS: [Bedside reassessment required]"]
+            if cl_physical_exam:
+                obj_lines.append(
+                    f"PHYSICAL EXAMINATION{attribution}: {cl_physical_exam}"
+                )
+            else:
+                obj_lines.append(
+                    "PHYSICAL EXAMINATION: [Clinician to complete at bedside]"
+                )
             if parts:
                 obj_lines.append(
                     "VOICE BIOMARKERS (Helios · wellness profile, not regulated medical device):"
@@ -348,6 +374,12 @@ class ScribeAgent:
             mdm_reason.append("clinician confirmation required")
             assess_lines.append("Justification: " + ", ".join(mdm_reason) + ".")
 
+            if cl_bedside_assess:
+                attribution = f"Dr. {cl_name}" if cl_name else "Bedside clinician"
+                assess_lines.append("")
+                assess_lines.append(f"CLINICIAN BEDSIDE ASSESSMENT ({attribution}):")
+                assess_lines.append(cl_bedside_assess)
+
             self.note.assessment = "\n".join(assess_lines)
 
         # ── P(lan) — numbered ED workup with disposition + handoff items ──
@@ -397,3 +429,14 @@ class ScribeAgent:
                     "Disposition: pending workup",
                     "Critical care time: clinician to document",
                 ]
+        # Append clinician plan additions AFTER V.I.C.T.O.R. items so the
+        # chart reader can see which actions came from the bedside provider.
+        # Done outside the "if not self.note.plan" guard so a follow-on
+        # addendum POST stacks new items even if the AI plan already exists.
+        if cl_plan_addendum:
+            existing = list(self.note.plan or [])
+            for item in cl_plan_addendum:
+                tagged = item if item.lstrip().startswith("(Clinician)") else f"(Clinician) {item}"
+                if tagged not in existing:
+                    existing.append(tagged)
+            self.note.plan = existing

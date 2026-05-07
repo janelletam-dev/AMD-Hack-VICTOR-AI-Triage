@@ -63,6 +63,11 @@ to fill structure is worse than an honest gap.
     Example: "Denies SOB, denies n/v, denies prior similar episodes."
     If pertinent_negatives is empty, omit this line.
 
+  ADDITIONAL HISTORY (clinician at bedside): <verbatim text of
+    context.clinician_addendum.additional_history if present; this is
+    the bedside-clinician's elaboration on what the kiosk captured.
+    Omit the entire section if not present.>
+
   PAST MEDICAL HISTORY: <bulleted list IF surfaced; else omit section>
   MEDICATIONS: <list IF surfaced; else omit section>
   ALLERGIES: <"NKDA" if explicitly denied; "Not assessed at triage" if not asked; else omit>
@@ -70,8 +75,14 @@ to fill structure is worse than an honest gap.
   FAMILY HISTORY: <relevant FH IF surfaced; e.g. "+ FH MI age 50 (father)"; else omit>
 
 - Objective:
-  VITAL SIGNS: [Bedside reassessment required]
-  PHYSICAL EXAMINATION: [Clinician to complete at bedside]
+  VITAL SIGNS: <if context.clinician_addendum.vitals_summary is set,
+    use it verbatim — that is bedside-clinician input. Format example:
+    "BP 142/88, HR 94, RR 18, SpO2 96%, Temp 98.4°F, Pain 6/10
+    (clinician @ <addendum.updated_at>)". If unset, write
+    "[Bedside reassessment required]">
+  PHYSICAL EXAMINATION: <if context.clinician_addendum.physical_exam
+    is set, use that text verbatim, prefixed with "Clinician findings:".
+    If unset, write "[Clinician to complete at bedside]">
   VOICE BIOMARKERS (Helios · wellness profile, not regulated medical device):
     Format: "stress 0.66 (mod-high), distress 0.66 (mod-high), mental
     strain 0.68 (mod-high), exhaustion 0.33 (mod-low), low self-esteem
@@ -100,6 +111,14 @@ to fill structure is worse than an honest gap.
   presence + risk score elevation. ESI 1-2 with flag = HIGH; ESI 3 with
   flag = MODERATE; ESI 4-5 = LOW.>
 
+  CLINICIAN BEDSIDE ASSESSMENT (when present): <if
+  context.clinician_addendum.bedside_assessment is set, include a
+  separate "CLINICIAN BEDSIDE ASSESSMENT (Dr. <clinician name if
+  given>):" subsection with the verbatim text. This is the bedside
+  clinician's own working differential — does NOT replace the
+  V.I.C.T.O.R. assessment above; it sits alongside it so a chart
+  reviewer can see both threads of reasoning.>
+
 - Plan: array of numbered, action-verb-led short strings, in priority
   order. Use placeholder language ("pending", "to be confirmed", "if
   elevated") for fields V.I.C.T.O.R. cannot determine — never fabricate
@@ -118,6 +137,13 @@ to fill structure is worse than an honest gap.
   Adjust the can't-miss workup steps to the actual chief complaint —
   abdominal pain triggers a different default plan (CT, surgical
   consult criteria, NPO) than chest pain.
+
+  CLINICIAN PLAN ADDITIONS: when context.clinician_addendum.plan_addendum
+  is a non-empty list, APPEND each item to the plan array AFTER the
+  V.I.C.T.O.R.-suggested items, prefixed with "(Clinician)" so the
+  chart reader can see which decisions came from the bedside provider.
+  Example: ["Bedside 12-lead ECG", "(Clinician) ASA 324mg given at 14:48",
+  "(Clinician) Cardiology paged"].
 
 UPDATE BEHAVIOUR
 - This is INCREMENTAL. Preserve prior content; merge new information.
