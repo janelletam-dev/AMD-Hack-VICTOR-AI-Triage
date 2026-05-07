@@ -520,6 +520,8 @@ export default function ClinicianDashboard() {
 
             <SOAPCard soap={soap} demographics={buildDemographics(identity, flagQueue)} clinicianAddendum={clinicianAddendum} />
 
+            <ScientificBasisCard />
+
             <ActionFooter
               hasSoap={!!soap}
               triageComplete={triageComplete}
@@ -532,6 +534,7 @@ export default function ClinicianDashboard() {
                 }
               }}
               onDowngrade={() => setShowDowngradeModal(true)}
+              onViewReport={() => navigate("/clinician/report")}
               onRunDemo={runDemo}
               running={running}
             />
@@ -581,7 +584,7 @@ export default function ClinicianDashboard() {
   );
 }
 
-function ActionFooter({ hasSoap, triageComplete, pushing, onApprove, onDowngrade, onRunDemo, running }) {
+function ActionFooter({ hasSoap, triageComplete, pushing, onApprove, onDowngrade, onRunDemo, running, onViewReport }) {
   // Hide the Run Demo button unless ?dev=1 is on the URL — judges shouldn't
   // see a "this is canned" tell during a live demo. Keeps the scripted
   // playback reachable as a worst-case fallback (visit /clinician?dev=1).
@@ -595,6 +598,13 @@ function ActionFooter({ hasSoap, triageComplete, pushing, onApprove, onDowngrade
     }}>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <button style={ghostBtn}>✎ Edit Note</button>
+        <button
+          onClick={onViewReport}
+          style={ghostBtn}
+          title="E.L.M.E.R. evidence-synthesis report — citation-grounded summary tying signals to literature"
+        >
+          📄 Evidence Report
+        </button>
         <button
           onClick={onDowngrade}
           style={{ ...ghostBtn, color: "var(--vic-error)", borderColor: "rgba(255, 180, 171, 0.25)" }}
@@ -807,6 +817,142 @@ function EsiTile({ heading, level, meta, muted, highlight }) {
 // Concordance Report — inspired by the TrueVoice gap-display pattern,
 // adapted to V.I.C.T.O.R.'s flag shape. Each flag becomes a "gap card"
 // with: the patient utterance quote, the matched minimisation phrase,
+// Compact card surfacing the literature anchors V.I.C.T.O.R.'s clinical
+// reasoning is grounded in. The "scientific basis" panel — gives a
+// reviewing clinician (or judge) one-click access to the peer-reviewed
+// papers behind each design decision, without leaving the live workspace.
+// Mirrors the README "Literature anchoring" section but condensed.
+const SCIENTIFIC_BASIS = [
+  {
+    label: "Croskerry · diagnostic dual-process",
+    detail: "System 1 / System 2 reasoning model — V.I.C.T.O.R. is operationally a Type 1 error backstop",
+    href: "https://pubmed.ncbi.nlm.nih.gov/19638766/",
+    cite: "Acad Med 2009",
+  },
+  {
+    label: "Sara · voice biomarker → CAD",
+    detail: "Voice biomarker associated with incident coronary artery disease",
+    href: "https://pubmed.ncbi.nlm.nih.gov/35341593/",
+    cite: "JACC 2022",
+  },
+  {
+    label: "Maor · vocal biomarker → HF",
+    detail: "Vocal biomarker associated with HF hospitalisation and mortality",
+    href: "https://www.ahajournals.org/doi/10.1161/JAHA.119.013359",
+    cite: "JAHA 2019",
+  },
+  {
+    label: "Hill · 4000 clicks",
+    detail: "EMR friction in the ED — voice-first triage replaces clicks",
+    href: "https://pubmed.ncbi.nlm.nih.gov/24060331/",
+    cite: "Am J Emerg Med 2013",
+  },
+  {
+    label: "Kanzaria · ED CDS",
+    detail: "How ED physicians want clinical decision support to behave",
+    href: "https://pubmed.ncbi.nlm.nih.gov/25807868/",
+    cite: "Acad Emerg Med 2015",
+  },
+  {
+    label: "MIMIC-IV bias dictionary",
+    detail: "60k-case BigQuery analysis — abd-pain F = 2.80 vs CP M = 2.17 acuity gap",
+    href: "https://github.com/janelletam-dev/AMD-Hack-VICTOR-AI-Triage#literature-anchoring",
+    cite: "BIDMC, n=60k",
+  },
+];
+
+function ScientificBasisCard() {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="vic-glass" style={{
+      padding: open ? 18 : 14, borderRadius: 14,
+      border: "1px solid rgba(47, 217, 244, 0.18)",
+      transition: "padding 0.2s",
+    }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: "100%", background: "transparent", border: "none",
+          padding: 0, display: "flex", justifyContent: "space-between",
+          alignItems: "center", cursor: "pointer", color: "var(--vic-on-surface)",
+        }}
+      >
+        <div style={{ textAlign: "left" }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700,
+            color: "rgba(47, 217, 244, 0.85)",
+            textTransform: "uppercase", letterSpacing: "0.2em",
+          }}>
+            Scientific basis
+          </div>
+          <div style={{
+            fontSize: 12, color: "var(--vic-on-surface-variant)",
+            marginTop: 4, lineHeight: 1.4,
+          }}>
+            Peer-reviewed literature behind V.I.C.T.O.R.'s clinical reasoning · {SCIENTIFIC_BASIS.length} anchors
+          </div>
+        </div>
+        <span style={{
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+          color: "var(--vic-primary)",
+          transform: open ? "rotate(90deg)" : "none",
+          transition: "transform 0.15s",
+        }}>▸</span>
+      </button>
+      {open && (
+        <div style={{
+          marginTop: 14, display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: 10,
+        }}>
+          {SCIENTIFIC_BASIS.map((ref) => (
+            <a
+              key={ref.label}
+              href={ref.href}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: "flex", flexDirection: "column", gap: 4,
+                padding: 12, borderRadius: 10,
+                background: "rgba(46, 52, 71, 0.4)",
+                border: "1px solid rgba(47, 217, 244, 0.15)",
+                textDecoration: "none",
+                transition: "border-color 0.15s, background 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.4)";
+                e.currentTarget.style.background = "rgba(46, 52, 71, 0.6)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "rgba(47, 217, 244, 0.15)";
+                e.currentTarget.style.background = "rgba(46, 52, 71, 0.4)";
+              }}
+            >
+              <div style={{
+                display: "flex", justifyContent: "space-between", gap: 8,
+              }}>
+                <span style={{
+                  fontSize: 12, fontWeight: 700,
+                  color: "var(--vic-on-surface)",
+                }}>{ref.label}</span>
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace", fontSize: 9,
+                  color: "rgba(47, 217, 244, 0.7)", letterSpacing: "0.04em",
+                  whiteSpace: "nowrap",
+                }}>{ref.cite}</span>
+              </div>
+              <span style={{
+                fontSize: 11, color: "var(--vic-on-surface-variant)",
+                lineHeight: 1.45,
+              }}>{ref.detail}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // the breaching biomarker evidence at that moment (Helios/Apollo/
 // Psyche values), and M.E.R.C.E.D.'s clinical gloss. Rolls up to a
 // 0-100 concordance score (0 = aligned, higher = more gaps weighted
