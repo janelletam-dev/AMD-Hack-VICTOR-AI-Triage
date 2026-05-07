@@ -6,6 +6,25 @@ Built by [Janelle Tamayo](https://huggingface.co/jantam13), RN — for the AMD D
 
 ---
 
+## Live demo
+
+Deployed on Railway. **HTTPS required** — browsers refuse microphone access on non-TLS pages, which would silently break the patient kiosk.
+
+| URL | What it is |
+|---|---|
+| **[/patient](https://amd-hack-victor-ai-triage-production.up.railway.app/patient)** | Voice triage kiosk — the patient-facing entry point. Tap **Begin** and grant microphone permission. Speak the chief complaint when prompted; J.A.C.K.I.E. (the patient-facing voice persona) drives the follow-up loop. |
+| **[/clinician](https://amd-hack-victor-ai-triage-production.up.railway.app/clinician)** | Live triage workspace — opens alongside the kiosk. Watch the swarm light up, biomarkers stream in, the concordance flag fire on verbal-acoustic mismatch, and the SOAP compose in real time. The bedside panel lets the clinician add vitals + exam findings; the SOAP recomposes co-authored. |
+| [/clinician/epic](https://amd-hack-victor-ai-triage-production.up.railway.app/clinician/epic) | Epic-style EMR chart view (post-approval). Shown after **Approve & Push to Epic** on the dashboard — produces a real FHIR R4 Bundle, downloadable from the "Posted to Epic" banner. |
+| [/clinician/report](https://amd-hack-victor-ai-triage-production.up.railway.app/clinician/report) | E.L.M.E.R. evidence-synthesis report — citation-grounded summary of the encounter. |
+
+**To see the bias-flagging demo end-to-end:** open `/patient` in one tab and `/clinician` in another. At the kiosk, after the identity capture phases, say:
+
+> *"I have chest pain. It started 24 hours ago. It feels like pressure radiating to my left arm. I have diabetes and high blood pressure. My dad had a heart attack at 50. I don't want to bother anyone, it's probably nothing — sorry to come in."*
+
+Watch the dashboard. The concordance flag should fire within seconds: verbal minimization ("probably nothing", "I don't want to bother anyone") meets elevated voice biomarkers (Helios stress + distress). M.E.R.C.E.D. composes the gloss; V.I.C.T.O.R. escalates ESI 3 → 2; S.C.R.I.B.E. produces an ED-grade SOAP note with the verbal-acoustic mismatch documented in the Assessment.
+
+---
+
 ## Architecture
 
 Three parallel signals from one voice input:
