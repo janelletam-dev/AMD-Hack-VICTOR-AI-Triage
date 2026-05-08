@@ -78,34 +78,54 @@ export default function EvidenceReport() {
   );
 
   useEffect(() => {
-    let cancelled = false;
+    // AbortController — when the user navigates away (back-key, route
+    // change), unmount calls ac.abort() which actively cancels the
+    // in-flight fetch. The earlier `cancelled` flag only suppressed
+    // state updates AFTER the fetch resolved; the underlying request
+    // kept running and could trigger the backend's deterministic
+    // fallback path if the connection dropped, surfacing 'LLM endpoint
+    // was unavailable' on the next visit even though vLLM was healthy.
+    const ac = new AbortController();
     setLoading(true);
     setErr(null);
     fetch(`${HTTP_BASE}/api/report`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
+      signal: ac.signal,
     })
       .then(async (r) => {
         if (!r.ok) throw new Error(`/api/report → ${r.status}`);
         return r.json();
       })
-      .then((data) => { if (!cancelled) setReport(data); })
-      .catch((e) => { if (!cancelled) setErr(String(e?.message || e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .then((data) => setReport(data))
+      .catch((e) => {
+        // AbortError on navigation is expected; stay silent.
+        if (e?.name === "AbortError") return;
+        setErr(String(e?.message || e));
+      })
+      .finally(() => {
+        // Don't flip loading off after abort — component is unmounting.
+        if (ac.signal.aborted) return;
+        setLoading(false);
+      });
+    return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Reference library is static — fetch once, ignore failures (the rest of
   // the report still works without it).
   useEffect(() => {
-    let cancelled = false;
-    fetch(`${HTTP_BASE}/api/references`)
+    const ac = new AbortController();
+    fetch(`${HTTP_BASE}/api/references`, { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => { if (!cancelled && data) setReferences(data); })
-      .catch(() => {});
-    return () => { cancelled = true; };
+      .then((data) => { if (data) setReferences(data); })
+      .catch((e) => {
+        // AbortError silent; other failures already swallowed by design
+        // (references are progressive enhancement).
+        if (e?.name !== "AbortError") { /* noop */ }
+      });
+    return () => ac.abort();
   }, []);
 
   const reportHtml = useMemo(
