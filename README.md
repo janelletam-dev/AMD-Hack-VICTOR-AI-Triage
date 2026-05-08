@@ -25,6 +25,36 @@ Watch the dashboard. The concordance flag should fire within seconds: verbal min
 
 ---
 
+## Live AMD MI300X verification
+
+The 5-agent swarm runs on a real MI300X GPU droplet (DigitalOcean, ATL1 region) serving the `victor-triage` LoRA via vLLM on AMD ROCm. Two ways to verify this isn't a stub:
+
+**1. Status pill on the live UI.** Every page in `/clinician` and `/patient` shows an **`AMD MI300X`** pill in the top-nav. Green = live inference; grey = fallback. The pill polls `/health/full` every 30 s. Land on [/clinician](https://amd-hack-victor-ai-triage-production.up.railway.app/clinician) and look top-right.
+
+**2. End-to-end health check.** Run this from any terminal:
+
+```bash
+curl -s https://amd-hack-victor-ai-triage-production.up.railway.app/health/full \
+  | jq '.checks[] | select(.service=="llm")'
+```
+
+Healthy response when the MI300X is up:
+
+```json
+{
+  "service": "llm",
+  "status": "ok",
+  "detail": "HTTP 200 · model=victor-triage · base=http://<reserved-ip>:8000/v1",
+  "latency_ms": 51.9
+}
+```
+
+`base=` confirms Railway is hitting a real DO Reserved IP (not localhost or an OpenAI fallback). `model=victor-triage` confirms the LoRA-served name is registered in vLLM. ~50 ms latency is Railway → ATL1 → MI300X round-trip — fast enough to drive a real-time triage UI.
+
+**Stack:** `rocm/vllm:latest` Docker image · `NousResearch/Meta-Llama-3.1-8B-Instruct` base · [`jantam13/victor-triage-lora-llama3.1-8b`](https://huggingface.co/jantam13/victor-triage-lora-llama3.1-8b) LoRA loaded at runtime via `--enable-lora` · 192 GB VRAM (MI300X 1× GPU) · 155 GB available KV cache. One-shot setup script: [`backend/scripts/setup-mi300x-droplet.sh`](backend/scripts/setup-mi300x-droplet.sh).
+
+---
+
 ## Architecture
 
 Three parallel signals from one voice input:
