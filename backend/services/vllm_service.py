@@ -109,13 +109,38 @@ class VLLMService:
                 max_tokens=max_tokens,
                 timeout=30,
             )
+        # Latency instrumentation — every chat call gets timed and the
+        # elapsed milliseconds logged at INFO so production deploys can
+        # verify the sub-1.5s voice-to-voice budget. The format is
+        # parseable for grafana/CSV later: "vllm.chat elapsed=Xms model=Y
+        # in_tokens=Z out_tokens=W".
+        import time as _time
+        t0 = _time.perf_counter()
         try:
             ai = await client.ainvoke(_to_lc(messages))
         except Exception as e:
-            log.warning("LLM call failed (base_url=%s): %s", self.base_url, e)
+            elapsed_ms = (_time.perf_counter() - t0) * 1000
+            log.warning(
+                "vllm.chat FAILED elapsed=%.0fms base_url=%s err=%s",
+                elapsed_ms, self.base_url, e,
+            )
             raise LLMUnavailable(str(e)) from e
+        elapsed_ms = (_time.perf_counter() - t0) * 1000
 
         content = ai.content if isinstance(ai.content, str) else str(ai.content)
+        # Approximate token counts via whitespace split — close enough
+        # for relative latency tracking; not for billing.
+        in_tokens = sum(len((m.content or "").split()) for m in _to_lc(messages))
+        out_tokens = len(content.split())
+        log.info(
+            "vllm.chat elapsed=%.0fms model=%s temp=%s max=%d in_tokens=%d out_tokens=%d",
+            elapsed_ms,
+            model or self.default_model,
+            temperature,
+            max_tokens,
+            in_tokens,
+            out_tokens,
+        )
         return content.strip()
 
     async def aclose(self) -> None:  # kept for backwards-compat

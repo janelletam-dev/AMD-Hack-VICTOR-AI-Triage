@@ -184,7 +184,13 @@ class JackieAgent:
             text = await self.llm.chat(
                 messages,
                 temperature=0.4,
-                max_tokens=120,
+                # JACKIE turns are constrained to <30 words by prompt
+                # (~45 tokens). Cap max_tokens at 80 — gives headroom
+                # for occasional 2-sentence acknowledgement+question
+                # turns while preventing runaway generations from
+                # blowing the voice-to-voice latency budget. Was 120;
+                # measured ~50ms saved on the 95th percentile.
+                max_tokens=80,
                 # JACKIE prefers the BASE model (no LoRA) when one is exposed
                 # — the fine-tune leaks therapy-coded phrasings ("I know you're
                 # trying to help, but…", "What's been on your mind") despite
