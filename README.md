@@ -639,20 +639,20 @@ FHIR R4 push surface, env-var-driven CORS, no wildcard origins — but
 the operational hardening is V2. We name the gaps explicitly here so
 they're auditable rather than hidden:
 
-| Area | Hackathon state | V2 plan |
+| Area | Hackathon state | V2 direction |
 |---|---|---|
-| **AuthN / AuthZ** | None on `/api/*` endpoints | Header-based API key for service-to-service, OAuth2 + per-clinician identity for human callers, SMART-on-FHIR for the Epic push |
-| **Rate limiting** | None | `slowapi` on `/api/*` (10 req/min/IP), Cloudflare in front for L7 abuse |
-| **WebSocket auth** | Open per-room | Signed room tokens (HMAC, 60-min expiry), origin pinning, per-room nonce |
-| **Session log persistence** | In-memory dict; uvicorn restart wipes | Redis with TTL for live state, durable audit trail to S3 with KMS encryption |
-| **PHI in app logs** | Transcript text at INFO | Structured logger with redaction; transcripts at DEBUG only; rotation + ship to SIEM |
+| **AuthN / AuthZ** | None on `/api/*` endpoints | Service-to-service API keys + per-clinician identity for human callers; SMART-on-FHIR pattern for the EHR push |
+| **Rate limiting** | None | Per-endpoint quotas + L7 abuse mitigation in front of the app |
+| **WebSocket auth** | Open per-room | Signed, time-bounded room tokens with origin pinning |
+| **Session log persistence** | In-memory dict; uvicorn restart wipes | Durable live-state store + immutable audit trail with encryption at rest |
+| **PHI in app logs** | Transcript text at INFO | Structured logger with redaction; transcript-level data behind verbosity gate; SIEM-bound |
 | **Demo-mode safety** | `DEMO_MODE=true` env toggle | Startup assertion refuses to boot with `DEMO_MODE=true` and `NODE_ENV=production` together (shipped — see `main.py`) |
-| **Secrets management** | `.env` file, gitignored | Doppler / AWS Secrets Manager / DO Vault; rotation every 90 days |
-| **HIPAA BAA** | Out of scope for hackathon | Required before any real PHI: BAAs with Anthropic, Deepgram, ElevenLabs, thymia, hosting; PHI-grade encryption at rest + in transit |
-| **Clinical validation** | MIMIC-IV-derived rules + LoRA fine-tune | Cross-institutional retrospective: MIMIC-IV-ED (BIDMC) + [ER-REASON (UCSF)](https://physionet.org/content/er-reason/1.0.0/) — the latter's 72 expert physician rationales as reasoning-alignment substrate. Then prospective study at a partner ED; IRB; FDA CDS Software guidance review (clinician retains independent review of basis) |
-| **Clinical coding** | SCRIBE narrative only — explicit "Coding: pending clinician verification" placeholder; LLM never emits ICD-10/SNOMED codes inline | **Verifier pattern**, not direct generation. (1) ICD-10: SCRIBE's Assessment text → embedding lookup via [`Atgenomix/icd_10_sentence_transformer_128_dim_model`](https://huggingface.co/Atgenomix/icd_10_sentence_transformer_128_dim_model) against the [CMS ICD-10-CM table](https://www.cms.gov/medicare/coding-billing/icd-10-codes) → top-3 suggestions with similarity scores → clinician confirms or replaces. (2) SNOMED CT concept tagging on FHIR Bundle resources (`Encounter.reasonCode`, `Observation.code`, `Flag.code`) using a curated subset (~50 concepts covering V.I.C.T.O.R.'s chief-complaint dictionary) so downstream Cloud Healthcare API / HealthLake / Epic FHIR consumers can act on the data, not just text-payload it. **Key principle:** codes come from a verified table, not LLM hallucination — codes the chart will be billed against require deterministic provenance. |
-| **Observability** | Stdout logs + `/health/full` | OpenTelemetry traces, Prometheus metrics, Sentry for errors, paged alerts on agent-fallback rate spikes |
-| **Disaster recovery** | None | Daily Redis snapshot, S3 cross-region replication, documented RTO/RPO |
+| **Secrets management** | `.env` file, gitignored | Managed secrets vault with rotation policy |
+| **HIPAA BAA** | Out of scope for hackathon | BAAs with all third-party processors before any real PHI; encryption at rest + in transit |
+| **Clinical validation** | MIMIC-IV-derived rules + LoRA fine-tune | Cross-institutional retrospective on additional datasets, then prospective study at a partner ED; IRB; FDA CDS Software guidance review (clinician retains independent review of basis) |
+| **Clinical coding** | SCRIBE narrative only — explicit "Coding: pending clinician verification" placeholder; LLM never emits ICD-10/SNOMED codes inline | **Verifier pattern**, not direct LLM generation. Codes come from a verified table with clinician confirmation, not LLM hallucination — codes the chart will be billed against require deterministic provenance. |
+| **Observability** | Stdout logs + `/health/full` | Distributed tracing, metrics, error reporting, paged alerts on agent-fallback rate spikes |
+| **Disaster recovery** | None | Snapshots + cross-region replication; documented RTO/RPO |
 
 **On the model side:** the LoRA adapter at
 [`jantam13/victor-triage-lora-llama3.1-8b`](https://huggingface.co/jantam13/victor-triage-lora-llama3.1-8b)
