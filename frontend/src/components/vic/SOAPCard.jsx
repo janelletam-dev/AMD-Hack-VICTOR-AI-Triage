@@ -132,7 +132,7 @@ export default function SOAPCard({
       )}
 
       <div style={{
-        display: "grid", gridTemplateColumns: "1fr 1fr", gap: 22,
+        display: "flex", flexDirection: "column", gap: 22,
       }}>
         <Section label="Subjective" border="rgba(47, 217, 244, 0.3)">
           <SubjectiveText text={soap?.subjective} />
