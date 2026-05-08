@@ -299,17 +299,29 @@ class ThymiaService:
         return None
 
 
-# Demo-mode biomarker generator. Starts at the canned "atypical CVD"
-# baseline (mirrors what the dashboard's scripted DEMO_EVENTS shows so
-# the swarm story still works on a fresh kiosk) and bumps individual
-# axes when the patient surfaces matching stress/exhaustion keywords
-# in their narrative. The clip-to-0.95 ceiling avoids saturated 1.0
-# values that look fake on the gauges.
+# Demo-mode biomarker generator. Starts at a CALM-patient baseline
+# (low/normal across all axes) and bumps individual axes when the
+# patient surfaces matching stress/exhaustion keywords in their
+# narrative (see _DEMO_TRANSCRIPT_BUMPS below). The clip-to-0.95
+# ceiling avoids saturated 1.0 values that look fake on the gauges.
+#
+# Earlier versions of this baseline were CV-elevated (stress 0.66,
+# distress 0.66, mental_strain 0.68) to drive the chest-pain demo's
+# concordance flag visually. That made every patient — including the
+# Scenario-2 negative-control ankle-pain patient — display concerning
+# gauges. Lowering the baseline to 0.33 lets the keyword bumps drive
+# elevation for actually-distressed patients (Scenario 1's
+# minimisation + cardiac script still pushes values into the 0.7-0.9
+# range via 3 keyword matches) while calm patients stay visibly calm.
 _DEMO_BASELINE = {
-    "stress":          0.66,
-    "distress":        0.66,
-    "exhaustion":      0.33,
-    "mental_strain":   0.68,
+    "stress":          0.33,
+    "distress":        0.33,
+    # Exhaustion threshold in concordance.py is 0.33 (lower than the
+    # other axes since fatigue is a key atypical-CVD signal). Baseline
+    # at 0.33 would fire elevation by default. Hold it below the
+    # threshold so calm patients don't trigger false positives.
+    "exhaustion":      0.20,
+    "mental_strain":   0.33,
     "sleep_propensity": 0.0,
     "low_self_esteem": 0.0,
 }
