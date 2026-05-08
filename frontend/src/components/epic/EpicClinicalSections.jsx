@@ -204,9 +204,15 @@ export function EpicSOAPSection({ note }) {
               }}>{k}</span>
               {name}
             </div>
+            {/* Inline color only for the EMPTY state (italic gray
+                placeholder). When content is present, omit the
+                inline color so the .vic-emr CSS rule (dark theme:
+                var(--vic-on-surface)) can win — inline styles take
+                precedence over CSS classes, so a hardcoded #1a2332
+                (light-theme dark navy) was rendering invisible on
+                the dark Epic theme. */}
             <div className="v" style={{
-              color: hasContent ? "#1a2332" : "#4a5b75",
-              fontStyle: hasContent ? "normal" : "italic",
+              ...(hasContent ? {} : { color: "#4a5b75", fontStyle: "italic" }),
               whiteSpace: isList ? "normal" : "pre-wrap",
             }}>
               {isList ? (

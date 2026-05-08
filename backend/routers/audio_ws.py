@@ -605,14 +605,13 @@ async def audio_ws(
             # "diabetes, high blood pressure"). Classify the LLM's question
             # against OPQRST/SAMPLE; if it targets a covered element, swap
             # in the canonical question for the first remaining priority.
-            previous_jackie = next(
-                (h.get("text") for h in reversed(history_snapshot)
-                 if h.get("role") == "jackie"),
-                None,
-            )
+            previous_jackie_questions = [
+                h.get("text") for h in history_snapshot
+                if h.get("role") == "jackie" and h.get("text")
+            ]
             text, swapped = replace_if_redundant(
                 text, covered, remaining,
-                previous_jackie_question=previous_jackie,
+                previous_jackie_questions=previous_jackie_questions,
                 language=language,
             )
             if swapped:

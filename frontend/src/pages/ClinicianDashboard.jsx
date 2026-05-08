@@ -533,7 +533,7 @@ export default function ClinicianDashboard() {
                 clinicians see the queue position before drilling into
                 biomarkers. ESI standard vs V.I.C.T.O.R.-adjusted, with
                 time-to-bed implications per ENA triage guidelines. */}
-            <TriagePriorityCard esi={esi} flagQueue={flagQueue} />
+            <TriagePriorityCard esi={esi} flagQueue={flagQueue} triageComplete={triageComplete} />
 
             <BiomarkerCard data={biomarkers} unavailable={biomarkerUnavailable} />
 
@@ -737,7 +737,7 @@ const ESI_LEVELS = {
   5: { label: "Non-Urgent",    color: "var(--vic-info)",     ttb: "<120 min",  description: "No resources expected; routine." },
 };
 
-function TriagePriorityCard({ esi, flagQueue }) {
+function TriagePriorityCard({ esi, flagQueue, triageComplete }) {
   const std = esi?.standard_esi;
   const adj = esi?.victor_esi;
   const reason = esi?.reason || esi?.adjustment_reason;
@@ -745,6 +745,13 @@ function TriagePriorityCard({ esi, flagQueue }) {
   const stdMeta = std && ESI_LEVELS[std];
   const adjMeta = adj && ESI_LEVELS[adj];
   const escalated = std && adj && adj < std;
+  // Mark ESI as PRELIMINARY when published mid-conversation. The
+  // hardcoded chest-pain safety floor and concordance flags publish
+  // ESI immediately (correctly — that's the demo's headline). But
+  // the clinician needs to know whether this is the FINAL acuity or
+  // the live preliminary read that may shift as JACKIE finishes the
+  // interview. Becomes 'CONFIRMED' once triage_complete fires.
+  const preliminary = !!(esi && !triageComplete);
 
   const headerTone = escalated ? "var(--vic-error)" : adjMeta ? adjMeta.color : "rgba(47, 217, 244, 0.6)";
   const border = escalated
@@ -765,8 +772,20 @@ function TriagePriorityCard({ esi, flagQueue }) {
             fontSize: 10, fontWeight: 700,
             color: "rgba(47, 217, 244, 0.8)",
             textTransform: "uppercase", letterSpacing: "0.2em",
+            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
           }}>
-            Triage Priority · V.I.C.T.O.R.
+            <span>Triage Priority · V.I.C.T.O.R.</span>
+            {esi && (
+              <span style={{
+                padding: "2px 8px", borderRadius: 999, fontSize: 9,
+                background: preliminary ? "rgba(255, 185, 95, 0.15)" : "rgba(120, 200, 160, 0.15)",
+                color: preliminary ? "rgba(255, 185, 95, 0.95)" : "var(--vic-aligned)",
+                border: `1px solid ${preliminary ? "rgba(255, 185, 95, 0.4)" : "rgba(120, 200, 160, 0.4)"}`,
+                letterSpacing: "0.1em",
+              }}>
+                {preliminary ? "Preliminary" : "Confirmed"}
+              </span>
+            )}
           </div>
           <div style={{
             fontSize: 14, color: "var(--vic-on-surface-variant)", marginTop: 4,

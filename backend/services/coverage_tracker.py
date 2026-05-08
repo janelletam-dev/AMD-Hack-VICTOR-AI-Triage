@@ -287,18 +287,19 @@ def replace_if_redundant(
     question: str,
     covered: set[str],
     remaining: list[str],
-    previous_jackie_question: str | None = None,
+    previous_jackie_questions: list[str] | None = None,
     language: str | None = None,
 ) -> tuple[str, bool]:
     """If `question` re-asks an element already covered, swap it for the
     canonical question on the first uncovered element from `remaining`.
 
-    Also catches LITERAL repetition of JACKIE's previous question — the
-    LoRA occasionally repeats itself verbatim or near-verbatim across
-    turns (observed scenario 2 2026-05-08: 'What makes it an 8?'
-    asked twice in a row). The duplicate-question guard fires when the
-    normalised question text overlaps the previous turn by more than
-    70% — strong signal the LoRA looped.
+    Also catches LITERAL repetition against ALL prior JACKIE turns in
+    the session (not just the immediately previous one) — observed
+    scenario 4 2026-05-08: Q1 'Does it move anywhere else — your jaw,
+    arm, back, or shoulder?' was followed three turns later by Q4
+    asking the exact same question. Comparing only to the previous
+    turn missed it. Now any prior JACKIE turn that overlaps the
+    candidate by ≥70% tokens triggers the swap.
 
     When `language` is Spanish, ALWAYS swap — the LoRA produces stilted
     or literal-mistranslated Spanish (observed 2026-05-08: '¿Cuánto
@@ -326,11 +327,15 @@ def replace_if_redundant(
         if replacement:
             return replacement, True
 
-    # Literal-repetition redundancy
-    if previous_jackie_question and _is_near_duplicate(question, previous_jackie_question):
-        replacement = _next_canonical(remaining, covered, questions)
-        if replacement:
-            return replacement, True
+    # Literal-repetition redundancy — check against every prior
+    # JACKIE turn in the session, not just the most recent.
+    if previous_jackie_questions:
+        for prior in previous_jackie_questions:
+            if prior and _is_near_duplicate(question, prior):
+                replacement = _next_canonical(remaining, covered, questions)
+                if replacement:
+                    return replacement, True
+                break
 
     return question, False
 

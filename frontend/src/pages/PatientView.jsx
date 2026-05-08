@@ -592,6 +592,11 @@ export default function PatientView() {
   const confirmRef = useRef(null);
   const spellingModeRef = useRef(false);
   const audioRef = useRef(null);
+  // Monotonic token incremented on every playTTS invocation. A fetch
+  // resolving for an OLD token is dropped without playing — final
+  // defence against the Jackie+Victor double-play bug when multiple
+  // playTTS calls fire faster than fetch + blob() resolution.
+  const ttsTokenRef = useRef(0);
   // AbortController tracking in-flight TTS fetches so a fresh playTTS
   // call can hard-cancel anything stale before issuing its own request.
   // Without this, a previous fetch resolving late can stomp audioRef
@@ -871,27 +876,25 @@ export default function PatientView() {
       if (typeof onEnded === "function") setTimeout(onEnded, 100);
       return;
     }
+    // Token guard against double-play. Every playTTS gets a unique
+    // token; before any audio is allowed to start, we check that this
+    // call is still the latest one. If a newer playTTS came in while
+    // this fetch was resolving, the token check fails and this audio
+    // is silently dropped — preventing the "Jackie + Victor at the
+    // same time" bug observed when persona switches mid-flight or
+    // when two jackie_turn events arrive faster than fetch resolution.
+    const myToken = ++ttsTokenRef.current;
+
     // Hard-cancel anything already playing AND any fetch still in
-    // flight from a previous playTTS call. The abort path is critical
-    // for fast phase transitions (sex tap → "Got it." → next prompt
-    // all within ~2s): without it, slow fetches resolve out-of-order
-    // and assign their audio object to audioRef AFTER the next prompt
-    // already started, breaking the ended-event chain that auto-starts
-    // the mic. AbortController turns out-of-order resolution into a
-    // clean "AbortError" that we silently ignore.
+    // flight from a previous playTTS call.
     if (audioRef.current) {
-      audioRef.current.pause();
+      try { audioRef.current.pause(); } catch {}
+      try { audioRef.current.src = ""; } catch {}
       audioRef.current = null;
     }
     if (ttsAbortRef.current) {
       try { ttsAbortRef.current.abort(); } catch { /* noop */ }
     }
-    // Hard-cancel any in-flight Web Speech utterance too. Without this,
-    // if a prior TTS fell back to Web Speech (server temporarily 5xx'd or
-    // returned fallback JSON), the queued utterance keeps playing while
-    // a fresh ElevenLabs stream starts — the patient hears two voices at
-    // the same time, often in different timbres (browser default vs the
-    // selected persona). Live calibration on 2026-05-07 surfaced this.
     if (typeof window !== "undefined" && window.speechSynthesis) {
       try { window.speechSynthesis.cancel(); } catch { /* noop */ }
     }
@@ -899,20 +902,29 @@ export default function PatientView() {
     ttsAbortRef.current = ac;
     const url = `${HTTP_BASE}/api/tts?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
 
-    // Try fetching — if server returns fallback JSON, use Web Speech API.
+    const isStale = () => myToken !== ttsTokenRef.current || ac.signal.aborted;
+
     fetch(url, { signal: ac.signal }).then(async (res) => {
-      if (ac.signal.aborted) return;
+      if (isStale()) return;
       const contentType = res.headers.get("content-type") || "";
       if (contentType.includes("application/json") || res.headers.get("X-TTS-Fallback")) {
-        // ElevenLabs unavailable — fall back to browser Web Speech API.
+        if (isStale()) return;
         speakWithWebSpeechAPI(text, onEnded);
         return;
       }
-      // Normal audio stream — play as before.
       const blob = await res.blob();
-      if (ac.signal.aborted) return;
+      if (isStale()) {
+        // Drop the audio — a newer playTTS has already started.
+        return;
+      }
       const blobUrl = URL.createObjectURL(blob);
       const audio = new Audio(blobUrl);
+      // Final stale-check right before assigning audioRef + playing,
+      // so a token bumped during `await res.blob()` still wins.
+      if (isStale()) {
+        URL.revokeObjectURL(blobUrl);
+        return;
+      }
       audioRef.current = audio;
       setTtsState("speaking");
       let settled = false;
@@ -927,9 +939,8 @@ export default function PatientView() {
       audio.addEventListener("error", () => finish("error"));
       audio.play().catch(() => finish("error"));
     }).catch((err) => {
-      // AbortError from .abort() — not a failure, just superseded.
       if (err && err.name === "AbortError") return;
-      // Network error — fall back to Web Speech API.
+      if (isStale()) return;
       speakWithWebSpeechAPI(text, onEnded);
     });
   }, [voice]);
