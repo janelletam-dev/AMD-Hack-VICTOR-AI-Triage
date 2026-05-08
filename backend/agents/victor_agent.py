@@ -140,6 +140,7 @@ class VictorAgent:
         pertinent_negatives: list[str] | None = None,
         gender: str | None = None,
         age: int | None = None,
+        triage_complete: bool = False,
     ) -> None:
         """Run the post-Helios pipeline:
             1. M.E.R.C.E.D. glosses each flag → publish concordance_flag events
@@ -157,25 +158,39 @@ class VictorAgent:
             "age": age,
         }
         if not flags:
-            # No concordance flags — still publish a default ESI so the
-            # dashboard isn't stuck on "Awaiting evidence" for cases like
-            # the ankle-pain negative control. Standard ESI defaults to 3
-            # via _DEFAULT_STANDARD_ESI lookup; adjusted = standard with
-            # "No adjustment" reason. Then update SOAP and exit.
-            esi_default = await self.decide_esi(None, [], transcript=transcript)
-            await bus.publish(
-                room,
-                {
-                    "type": "esi_update",
-                    "data": {
-                        "standard_esi": esi_default["standard"],
-                        "victor_esi": esi_default["adjusted"],
-                        "adjustment_reason": esi_default["reason"],
-                        "agent": self.name,
+            # No concordance flags. Two cases for when (and whether) to
+            # publish ESI:
+            #   1. triage_complete == True: this is the FINAL evaluation
+            #      after JACKIE has closed. Publish the default ESI so the
+            #      dashboard doesn't stay stuck on "Awaiting evidence" for
+            #      negative-control cases (ankle pain, simple lacs, etc).
+            #   2. triage_complete == False: mid-conversation. Skip the
+            #      default publish — emitting ESI 3/3 "No adjustment"
+            #      while the patient is still answering questions reads
+            #      as if V.I.C.T.O.R. has decided too early. The chest-
+            #      pain safety-keyword auto-escalation (audio_ws.handle
+            #      _safety_escalation) publishes its own ESI 3/2 already
+            #      when those keywords fire, so we're not hiding any
+            #      live signal — just deferring the "No adjustment" call
+            #      until JACKIE finishes.
+            # Either way SOAP keeps streaming so the chart stays current.
+            if triage_complete:
+                esi_default = await self.decide_esi(None, [], transcript=transcript)
+                await bus.publish(
+                    room,
+                    {
+                        "type": "esi_update",
+                        "data": {
+                            "standard_esi": esi_default["standard"],
+                            "victor_esi": esi_default["adjusted"],
+                            "adjustment_reason": esi_default["reason"],
+                            "agent": self.name,
+                        },
                     },
-                },
-            )
-            await self._scribe_step(room, transcript, biomarkers, [], esi_default, patient_ctx)
+                )
+                await self._scribe_step(room, transcript, biomarkers, [], esi_default, patient_ctx)
+            else:
+                await self._scribe_step(room, transcript, biomarkers, [], None, patient_ctx)
             return
 
         # 1. Glossify each flag in parallel.

@@ -674,6 +674,28 @@ async def audio_ws(
                         "data": {"reason": "interview-coverage-complete"},
                     },
                 )
+                state["triage_complete"] = True
+                # Re-run V.I.C.T.O.R. one more time with triage_complete=True
+                # so that negative-control cases (no flags fired through the
+                # whole interview) finally publish a default ESI 3/3 "No
+                # adjustment" instead of staying on "Awaiting evidence".
+                full_text = _full_patient_text(state)
+                final_flags = concordance_engine.evaluate(
+                    full_text,
+                    {"helios": state.get("last_helios_block") or {}},
+                )
+                await swarm.victor.on_concordance_evaluation(
+                    room=room,
+                    flags=final_flags,
+                    transcript=full_text,
+                    biomarkers={"helios": state.get("last_helios_block") or {}},
+                    chief_complaint_label=(final_flags[0].triage_label if final_flags else None),
+                    chief_complaint_text=state.get("complaint_text"),
+                    pertinent_negatives=state.get("pertinent_negatives") or [],
+                    gender=state.get("gender"),
+                    age=_age_from_dob_iso(state.get("dob_iso")),
+                    triage_complete=True,
+                )
         finally:
             state["jackie_busy"] = False
 
@@ -807,6 +829,10 @@ async def audio_ws(
         # Track submission progress for incremental refresh.
         state["helios_submit_count"] += 1
         state["last_helios_submit_frames"] = len(pcm_chunks)
+        # Cache the latest helios_block so the triage-complete handler
+        # can re-run the engine with current biomarkers without
+        # re-submitting audio.
+        state["last_helios_block"] = helios_block
 
         # Run the concordance engine, then hand off to V.I.C.T.O.R. The
         # orchestrator publishes concordance_flag (with M.E.R.C.E.D. gloss),

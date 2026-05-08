@@ -50,6 +50,26 @@ function ageFromDOB(dob) {
   return age >= 0 && age < 130 ? age : null;
 }
 
+// BCP-47 language code → human-readable label. Covers the languages
+// Deepgram Flux Multilingual reliably detects. For unknown codes we
+// just uppercase the prefix ('fr-CA' → 'French (FR-CA)') rather than
+// claiming knowledge we don't have.
+const _LANGUAGE_LABELS = {
+  en: "English", es: "Spanish", fr: "French", pt: "Portuguese",
+  de: "German", it: "Italian", nl: "Dutch", pl: "Polish",
+  ru: "Russian", uk: "Ukrainian", ar: "Arabic", he: "Hebrew",
+  zh: "Chinese", ja: "Japanese", ko: "Korean", vi: "Vietnamese",
+  hi: "Hindi", bn: "Bengali", ta: "Tamil", tr: "Turkish",
+};
+function formatLanguage(code) {
+  if (!code) return "";
+  const lower = String(code).toLowerCase();
+  const base = lower.split("-")[0];
+  const name = _LANGUAGE_LABELS[base];
+  if (!name) return String(code).toUpperCase();
+  return base === lower ? name : `${name} (${String(code).toUpperCase()})`;
+}
+
 function buildDemographics(identity, flagQueue) {
   if (!identity) identity = {};
   // Demo line: name · age · sex. Sex assigned at birth is captured on
@@ -103,6 +123,11 @@ export default function ClinicianDashboard() {
   const navigate = useNavigate();
   const [activeRoom, setActiveRoom] = useState("demo");
   const [transcript, setTranscript] = useState("");
+  // Latest detected patient language (BCP-47 from Deepgram, e.g. 'en',
+  // 'es', 'es-MX'). Surfaced on the chart so the bedside clinician
+  // knows what language the patient was speaking — drives interpreter
+  // request decisions even when the chart is rendered in English.
+  const [patientLanguage, setPatientLanguage] = useState("");
   const [biomarkers, setBiomarkers] = useState(null);
   const [biomarkerUnavailable, setBiomarkerUnavailable] = useState(false);
   const [flag, setFlag] = useState(null);
@@ -191,6 +216,12 @@ export default function ClinicianDashboard() {
     if (type === "transcript") {
       setTranscript(data.text);
       logTranscript(data);
+      // Capture the detected language from Deepgram so the chart can
+      // surface it. Only update on finalised lines so we don't flicker
+      // between languages on partial transcripts.
+      if (data.language && data.is_final !== false) {
+        setPatientLanguage(data.language);
+      }
       // Append finalised transcript lines to the conversation log so the
       // verbatim accordion can replay the full Q&A flow. Two filters:
       //   1) Skip empty / non-final lines
@@ -483,6 +514,7 @@ export default function ClinicianDashboard() {
               transcript={transcript}
               conversationLog={conversationLog}
               riskScores={riskScores}
+              patientLanguage={patientLanguage}
             />
 
             {/* Triage Priority — sits directly under the chart header so
@@ -979,9 +1011,13 @@ function ScientificBasisCard() {
 // anything" instead of an empty space they have to interpret.
 function ConcordanceReport({ flags, biomarkers }) {
   const list = Array.isArray(flags) ? flags : [];
-  // Collapsed by default when ALIGNED (low-signal, just confirms nothing
-  // wrong) — expanded by default when flags fire (the demo moment).
-  // Clinician can override either way.
+  // Whether biomarkers have actually arrived. Until the first reading
+  // lands, the report has nothing to evaluate — show a thin "monitoring"
+  // status instead of the full ALIGNED explainer (which reads as
+  // templated when shown by default at session start).
+  const hasBiomarkerReading = !!(biomarkers && Object.keys(biomarkers.helios || {}).length > 0);
+  // Collapsed by default when ALIGNED (low-signal) — expanded by
+  // default when flags fire. Clinician can override either way.
   const [expanded, setExpanded] = useState(list.length > 0);
   // Re-expand if flags arrive while collapsed — the dashboard should never
   // hide a fresh concordance gap from the clinician.
@@ -1068,7 +1104,9 @@ function ConcordanceReport({ flags, biomarkers }) {
             fontFamily: "'Space Grotesk', 'Inter', sans-serif",
             lineHeight: 1.1,
           }}>
-            {list.length === 0 ? "ALIGNED" : `${list.length} gap${list.length > 1 ? "s" : ""}`}
+            {list.length > 0
+              ? `${list.length} gap${list.length > 1 ? "s" : ""}`
+              : (hasBiomarkerReading ? "ALIGNED" : "MONITORING")}
           </div>
           {list.length > 0 && (
             <div style={{
@@ -1082,7 +1120,24 @@ function ConcordanceReport({ flags, biomarkers }) {
         </div>
       </button>
       {expanded && (list.length === 0 ? (
-        <AlignedExplainer biomarkers={biomarkers} />
+        hasBiomarkerReading
+          ? <AlignedExplainer biomarkers={biomarkers} />
+          : <div style={{
+              padding: "12px 14px", borderRadius: 10,
+              background: "rgba(46, 52, 71, 0.4)",
+              border: "1px solid rgba(69, 70, 77, 0.3)",
+              fontSize: 12, color: "var(--vic-on-surface-variant)",
+              lineHeight: 1.55,
+            }}>
+              <span style={{ color: "var(--vic-primary)", fontWeight: 700 }}>
+                Engine monitoring.
+              </span>{" "}
+              Awaiting first biomarker reading. The conjunctive rule —
+              verbal minimisation × biomarker breach — only evaluates
+              once both signals are sampled. The flag panel below
+              will surface the captured phrase, breaching axes, and
+              confidence percentage when (and if) one fires.
+            </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {list.map((f, i) => (
@@ -1932,13 +1987,16 @@ function ConversationBubble({ entry }) {
   );
 }
 
-function IdentityCard({ identity, flagQueue, transcript, conversationLog, riskScores }) {
+function IdentityCard({ identity, flagQueue, transcript, conversationLog, riskScores, patientLanguage }) {
   const { name, dob, complaint } = identity || {};
   // SCRIBE-distilled clinician-shorthand chief complaint, e.g. "Chest
   // pain x 24h, pressure-like". Falls back to first-sentence-truncated
   // raw complaint while SCRIBE is still working (~1s after intake) so
   // the chart header is never empty when patient data exists.
   const complaintShort = identity?.chief_complaint_short || "";
+  // Map BCP-47 → friendly label. Conservative fallback: just uppercase
+  // the code so 'fr-CA' → 'FR-CA' rather than guessing the language.
+  const languageLabel = formatLanguage(patientLanguage);
   // Suspected diagnosis surfaces from the top concordance flag (highest
   // tier wins, ordered by the bus). triage_label is short enough to
   // sit next to the CC ("Possible cardiac event"). When no flag has
@@ -2072,6 +2130,13 @@ function IdentityCard({ identity, flagQueue, transcript, conversationLog, riskSc
               label="Date of birth" value={dob || "—"} primary={!!dob}
               original={original?.dob}
             />
+            {languageLabel && (
+              <IdField
+                label="Language"
+                value={languageLabel}
+                primary
+              />
+            )}
             <IdField
               label="Reason for visit"
               // SCRIBE-distilled CC ("Chest pain x 24h") preferred. If
