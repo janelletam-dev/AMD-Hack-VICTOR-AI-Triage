@@ -54,6 +54,91 @@ def extract_covered(history: Iterable[dict]) -> set[str]:
     return covered
 
 
+# Canonical question text per element — used as the deterministic fallback
+# when JACKIE's LLM-generated turn would re-ask covered ground. Phrased in
+# plain conversational English (no clinical jargon — patients hear these).
+_ELEMENT_QUESTIONS: dict[str, str] = {
+    "onset":        "When did this first start?",
+    "severity":     "On a scale of 1 to 10, how would you rate the pain right now?",
+    "quality":      "Can you describe what it feels like — sharp, dull, pressure, burning?",
+    "region":       "Where exactly is it bothering you?",
+    "radiation":    "Does it move anywhere else — your jaw, arm, back, or shoulder?",
+    "associated":   "Any other symptoms with it — sweating, nausea, shortness of breath?",
+    "aggravating": "Is there anything that makes it worse?",
+    "alleviating": "Have you tried anything that makes it better?",
+    "setting":     "What were you doing when this started?",
+    "pmh":         "Any health conditions we should know about — diabetes, high blood pressure, or heart problems?",
+    "medications": "Are you taking any medications right now?",
+    "allergies":   "Any allergies we should know about, especially to medications?",
+    "lmp":         "When was your last menstrual period?",
+}
+
+
+# Question patterns that indicate a JACKIE turn is asking about a particular
+# element. Matched against JACKIE's OUTPUT (her question to the patient).
+# Tighter than ELEMENTS (which matches patient *answers*) because question
+# phrasing is more bounded — onset is "when did/how long", severity is "rate /
+# scale of 1 to 10", etc. This is the redundancy detector's classifier.
+_QUESTION_PATTERNS: dict[str, list[str]] = {
+    "onset":     [r"\bwhen did", r"\bhow long", r"\b(suddenly|gradually)\b"],
+    "severity":  [r"\b(rate|scale)\b", r"\b1\s*(?:to|-)\s*10\b", r"\bhow (?:bad|severe)\b"],
+    "quality":   [r"\b(what does it feel|describe.*feel)\b", r"\b(sharp|dull|pressure|burning|stabbing|crushing)\b"],
+    "region":    [r"\bwhere\s+(?:exactly|does it|is)\b", r"\bpoint to\b"],
+    "radiation": [r"\b(radiat|move|spread|go(?:es)?\s+(?:down|to|into))\b"],
+    "associated":[r"\b(any other (?:symptom|problem)|along\s+with)\b", r"\b(nausea|vomit|sweat|shortness|dizz|fever)\b\?"],
+    "aggravating":[r"\b(make[s]?\s+it\s+worse|worse\s+(?:when|with))\b"],
+    "alleviating":[r"\b(make[s]?\s+it\s+better|tried anything|relieved)\b"],
+    "pmh":       [r"\bhealth conditions?\b", r"\b(diabetes|high blood pressure|heart problems|cardiac history)\b\?"],
+    "medications":[r"\bmedications?\b", r"\btaking any (?:meds|drug|pill)\b"],
+    "allergies": [r"\ballerg"],
+    "lmp":       [r"\b(last menstrual|last period|lmp)\b"],
+}
+
+
+def classify_question_element(question: str) -> str | None:
+    """Classify which OPQRST/SAMPLE element a JACKIE question targets.
+
+    Returns the element name (e.g. 'onset', 'severity') or None if the
+    question doesn't cleanly map to an element (open-ended acknowledgements,
+    closing turns, edge cases). When None, the redundancy filter should
+    let the question pass — better to risk a missed redundancy than to
+    silently rewrite a thoughtful contextual probe.
+    """
+    if not question or not question.strip():
+        return None
+    q = question.lower()
+    best: tuple[str, int] | None = None
+    for name, patterns in _QUESTION_PATTERNS.items():
+        hits = sum(1 for p in patterns if re.search(p, q, re.IGNORECASE))
+        if hits and (best is None or hits > best[1]):
+            best = (name, hits)
+    return best[0] if best else None
+
+
+def replace_if_redundant(
+    question: str,
+    covered: set[str],
+    remaining: list[str],
+) -> tuple[str, bool]:
+    """If `question` re-asks an element already covered, swap it for the
+    canonical question on the first uncovered element from `remaining`.
+
+    Returns (final_question, was_replaced). When no redundancy is detected,
+    or no remaining element has a canonical question, the original is
+    returned unchanged.
+    """
+    target = classify_question_element(question)
+    if not target or target not in covered:
+        return question, False
+    for name in remaining:
+        if name in covered:
+            continue
+        canonical = _ELEMENT_QUESTIONS.get(name)
+        if canonical:
+            return canonical, True
+    return question, False
+
+
 # NegEx-style negation triggers (Chapman et al, JBI 2001). Restricted
 # to the most reliable patterns; "no" is intentionally tight (only
 # "no <concept>") to avoid fabricating negatives from prose starters

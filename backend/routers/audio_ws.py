@@ -28,7 +28,9 @@ from services.clinical_knowledge import (
     is_chest_pain,
     is_dyspnea_or_pe_concern,
 )
-from services.coverage_tracker import extract_covered, extract_negatives, priority_order
+from services.coverage_tracker import (
+    extract_covered, extract_negatives, priority_order, replace_if_redundant,
+)
 from services.deepgram_service import DeepgramService, Transcript
 from services.event_bus import bus
 from services.thymia_service import (
@@ -588,6 +590,19 @@ async def audio_ws(
                 coverage_covered=covered,
                 coverage_remaining=remaining,
             )
+            # Redundancy guard — even with the COVERAGE block in the prompt,
+            # the LoRA occasionally re-asks ground the patient already
+            # answered (observed: asking about onset / severity / PMH after
+            # the chief complaint already contained "started 24 hours ago",
+            # "diabetes, high blood pressure"). Classify the LLM's question
+            # against OPQRST/SAMPLE; if it targets a covered element, swap
+            # in the canonical question for the first remaining priority.
+            text, swapped = replace_if_redundant(text, covered, remaining)
+            if swapped:
+                log.info(
+                    "session=%s jackie redundancy: LLM asked covered ground; swapped to next-priority canonical question",
+                    session_id,
+                )
             state["jackie_history"].append({"role": "patient", "text": patient_utterance})
             state["jackie_history"].append({"role": "jackie", "text": text})
             await bus.publish(
