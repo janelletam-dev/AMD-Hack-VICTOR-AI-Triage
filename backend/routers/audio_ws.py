@@ -613,11 +613,12 @@ async def audio_ws(
             text, swapped = replace_if_redundant(
                 text, covered, remaining,
                 previous_jackie_question=previous_jackie,
+                language=language,
             )
             if swapped:
                 log.info(
-                    "session=%s jackie redundancy: LLM asked covered ground or repeated prior question; swapped to next-priority canonical",
-                    session_id,
+                    "session=%s jackie redundancy: LLM asked covered ground, repeated prior question, or non-English language=%s; swapped to next-priority canonical",
+                    session_id, language,
                 )
             state["jackie_history"].append({"role": "patient", "text": patient_utterance})
             state["jackie_history"].append({"role": "jackie", "text": text})

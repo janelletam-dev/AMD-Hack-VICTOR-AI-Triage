@@ -194,6 +194,11 @@ ELEMENTS: dict[str, list[str]] = {
         r"\b(yesterday|today|tonight|this\s+morning|last\s+night|last\s+week|last\s+month)\b",
         r"\b(since|started|began|onset|came\s+on)\b",
         r"\b(suddenly|gradually|all\s+of\s+a\s+sudden)\b",
+        # Spanish onset markers (US-clinical neutral / "usted" register)
+        r"\b(empez[oó]|comenz[oó]|inici[oó])\b",
+        r"\b(ayer|anoche|hoy|esta\s+ma[ñn]ana|anteayer|la\s+semana\s+pasada)\b",
+        r"\bhace\s+(?:un[oa]?s?\s+)?\d*\s*(?:minuto|hora|d[ií]a|semana|mes|a[ñn]o)s?\b",
+        r"\b(de\s+repente|gradualmente|poco\s+a\s+poco)\b",
     ],
     "severity": [
         r"\b\d{1,2}\s*(out\s+of|/)\s*10\b",
@@ -216,17 +221,28 @@ ELEMENTS: dict[str, list[str]] = {
         r"\b(sharp|dull|burning|stabbing|crushing|pressure|tight(ness)?|"
         r"throbbing|aching|cramp\w*|squeez\w*|pounding|stinging|gnawing)\b",
         r"\b(feels?\s+like)\b",
+        # Spanish quality descriptors
+        r"\b(presi[oó]n|opresi[oó]n|punzante|sordo|ardor|ardiente|"
+        r"quemante|punzada|apretado|aplastante)\b",
+        r"\b(se\s+siente\s+como|como\s+(?:un|una))\b",
     ],
     "region": [
         r"\b(chest|abdomen|abdominal|stomach|belly|head|back|arm|leg|throat|"
         r"neck|jaw|shoulder|hip|knee|ankle|wrist|hand|foot|"
         r"left\s+(side|arm|leg)|right\s+(side|arm|leg)|center|middle|"
         r"upper|lower|epigastric|flank|groin|pelvic)\b",
+        # Spanish anatomy
+        r"\b(pecho|abdomen|vientre|est[oó]mago|cabeza|espalda|brazo|pierna|"
+        r"garganta|cuello|mand[ií]bula|hombro|cadera|rodilla|tobillo|"
+        r"mu[ñn]eca|mano|pie|izquierd[oa]|derech[oa])\b",
     ],
     "radiation": [
         r"\b(radiat\w*|spreads?|moves?|going\s+(down|into|up)|"
         r"down\s+my\s+\w+|into\s+my\s+\w+|up\s+to\s+my\s+\w+|"
         r"shoots?\s+(down|into|up))\b",
+        # Spanish radiation patterns
+        r"\b(se\s+irradi\w+|se\s+mueve|se\s+extiende|baja|sube|"
+        r"va\s+(?:hacia|a)\s+\w+|me\s+llega\s+a)\b",
     ],
     "associated": [
         r"\b(nausea|nauseous|vomit\w*|throw(ing)?\s+up|fever|chills|"
@@ -236,6 +252,11 @@ ELEMENTS: dict[str, list[str]] = {
         r"palpitations|racing\s+heart|diarr?h[eo]?a|constipat\w*|"
         r"urin\w+\s+(?:problems?|issues?|changes?)|"
         r"loose\s+stools?|blood\s+in\s+(?:stool|urine))\b",
+        # Spanish associated symptoms
+        r"\b(n[aá]usea|v[oó]mito|fiebre|escalofr[ií]os|sudor\w*|"
+        r"falta\s+de\s+aire|mareo|mare[aá]\w*|cansancio|tos|"
+        r"hinchaz[oó]n|debilidad|entumec\w*|hormigueo|palpitaciones|"
+        r"diarrea|estre[ñn]imiento)\b",
     ],
     "aggravating": [
         r"\b(worse\s+(when|with|after)|aggravat\w*|trigger\w*|"
@@ -260,12 +281,18 @@ ELEMENTS: dict[str, list[str]] = {
     "allergies": [
         r"\b(no\s+allerg\w*|allerg\w+\s+to|i'?m\s+allergic|"
         r"penicillin|sulfa|peanut|latex|nkda)\b",
+        # Spanish allergies
+        r"\b(no\s+(?:tengo\s+)?alergias?|soy\s+al[eé]rgic[oa]|"
+        r"penicilina|alergia\s+a)\b",
     ],
     "medications": [
         r"\b(no\s+(med|medication)|not\s+(taking|on)\s+any\s+(med|medication)|"
         r"taking|on\s+\w+\s+(for|to)|metformin|lisinopril|aspirin|"
         r"insulin|blood\s+thinner|anticoagulant|warfarin|eliquis|"
         r"plavix|statin|ibuprofen|tylenol|acetaminophen)\b",
+        # Spanish medications phrasing
+        r"\b(tomo|estoy\s+tomando|tomando|no\s+tomo\s+(?:ning[uú]n\s+)?medicament|"
+        r"medicament[oa]s?|metformina|insulina|aspirina)\b",
     ],
     "pmh": [
         r"\b(diabet\w*|hypertens\w*|high\s+blood\s+pressure|"
@@ -276,10 +303,18 @@ ELEMENTS: dict[str, list[str]] = {
         r"had\s+this\s+before|never\s+had\s+this|first\s+time|"
         r"happens?\s+(all\s+the\s+time|often|frequently|regularly)|"
         r"this\s+has\s+happened\s+before)\b",
+        # Spanish PMH disclosure
+        r"\b(diabetes|diab[eé]tic[oa]|hipertensi[oó]n|presi[oó]n\s+alta|"
+        r"problemas?\s+(?:del|de)\s+coraz[oó]n|infart[oa]|enfermedad\s+cardiaca|"
+        r"asma|c[aá]ncer|tengo\s+(?:la\s+)?\w+|me\s+diagnosticaron|"
+        r"(?:soy|fui)\s+diagnosticad[oa])\b",
     ],
     "lmp": [
         r"\b(last\s+period|lmp|last\s+menstrual|menstrual\s+period|"
         r"pregnan\w*|could\s+be\s+pregnant|missed\s+period)\b",
+        # Spanish menstrual / pregnancy
+        r"\b(?:[uú]ltima\s+regla|[uú]ltima\s+menstruaci[oó]n|"
+        r"embaraz\w+|estoy\s+embarazada|pudiera\s+estar\s+embarazada)\b",
     ],
 }
 

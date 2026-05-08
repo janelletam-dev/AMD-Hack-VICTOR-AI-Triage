@@ -117,6 +117,21 @@ TIER_4_PHRASES: tuple[str, ...] = (
     r"\bi\s+(?:do(?:n'?t|\s+not)|didn'?t)\s+want\s+to\s+(?:bother|trouble|make\s+a\s+fuss)\b",
     r"\bsorry\s+to\s+(?:come\s+in|bother|trouble|waste)\b",
     r"\bbeen\s+going\s+on\s+for\s+a\s+while\s+but\b",
+    # Spanish minimisation phrases (US-clinical neutral). Same conjunctive
+    # logic — matched against the patient transcript regardless of language;
+    # no flag fires unless biomarkers are also elevated.
+    r"\bno\s+es\s+nada\s+grave\b",
+    r"\bno\s+es\s+nada\b",
+    r"\bprobablemente\s+no\s+es\s+nada\b",
+    r"\bno\s+quiero\s+molestar(?:lo|la|los|las|\s+a\s+nadie)?\b",
+    r"\bno\s+quer[ií]a\s+molestar(?:lo|la|los|las|\s+a\s+nadie)?\b",
+    r"\bdiscul(?:pe|pen|pa)\s+(?:la\s+)?molesti(?:a|ar)?\b",
+    r"\bperd(?:[oó]n|one)\s+por\s+venir\b",
+    r"\bestoy\s+bien,?\s+(?:de\s+verdad|nada\s+m[aá]s|en\s+serio)\b",
+    r"\bse\s+me\s+(?:va\s+a|va)\s+pasar\b",
+    r"\bno\s+es\s+para\s+tanto\b",
+    r"\bes\s+(?:probablemente\s+|solo\s+)?estr[eé]s\b",
+    r"\bcreo\s+que\s+es\s+ansiedad\b",
 )
 
 
@@ -200,6 +215,10 @@ CVD_RISK_FACTORS: tuple[RiskFactor, ...] = (
         r"\bhigh\s+blood\s+sugar\b",
         r"\binsulin\b",
         r"\bmetformin\b",
+        # Spanish
+        r"\bdiabetes\b",
+        r"\bdiab[eé]tic[oa]\b",
+        r"\bmetformina\b",
     )),
     RiskFactor("hypertension", (
         r"\bhypertens",
@@ -207,6 +226,9 @@ CVD_RISK_FACTORS: tuple[RiskFactor, ...] = (
         r"\bbp\s+is\s+(high|up)\b",
         r"\bblood\s+pressure.*high\b",
         r"\b(lisinopril|amlodipine|losartan|metoprolol|atenolol|hydrochlorothiazide)\b",
+        # Spanish
+        r"\bhipertensi[oó]n\b",
+        r"\bpresi[oó]n\s+alta\b",
     )),
     RiskFactor("prior MI", (
         r"\b(heart\s+attack|myocardial\s+infarction|m\.?i\.?)\b",
@@ -214,6 +236,10 @@ CVD_RISK_FACTORS: tuple[RiskFactor, ...] = (
         r"\bcoronary\s+(stent|bypass|artery\s+disease|cad)\b",
         r"\bafib\b|\batrial\s+fibrillation\b",
         r"\bheart\s+failure\b|\bchf\b",
+        # Spanish
+        r"\binfarto\b",
+        r"\bataque\s+al\s+coraz[oó]n\b",
+        r"\bcirug[ií]a\s+(?:del|de)\s+coraz[oó]n\b",
     )),
     RiskFactor("smoking", (
         r"\bsmok(e|er|ing)\b",
@@ -221,11 +247,17 @@ CVD_RISK_FACTORS: tuple[RiskFactor, ...] = (
         r"\bvape\b|\bvaping\b",
         r"\bnicotin",
         r"\bpack\s+a\s+day\b|\b(\d+)\s+packs?\s+(a|per)\s+day\b",
+        # Spanish
+        r"\bfumo\b|\bfumador[a]?\b|\bfumando\b",
+        r"\bcigarrillo",
     )),
     RiskFactor("family history of CVD", (
         r"\b(my\s+)?(dad|father|mom|mother|brother|sister|parent|grand(father|mother|pa|ma))\b.*\b(heart|cardiac|stroke)\b",
         r"\bfamily\s+history\s+of\s+(heart|cardiac|cvd)\b",
         r"\b(dad|father|mom|mother).*\b(heart\s+attack|m\.?i\.?|bypass)\b",
+        # Spanish family-history mentions of cardiac events
+        r"\b(mi\s+)?(?:pap[aá]|padre|mam[aá]|madre|hermano|hermana|abuel[oa])\b.*?\b(?:coraz[oó]n|infarto|cardiaco|c[aá]ncer)\b",
+        r"\bhistoria\s+familiar\s+de\s+(?:coraz[oó]n|cardiac|infarto)\b",
     )),
     RiskFactor("high cholesterol", (
         r"\bhigh\s+cholesterol\b",
@@ -325,6 +357,11 @@ SAFETY_KEYWORDS_ESI2: tuple[EmergencyKeyword, ...] = (
         r"\bmy\s+chest\s+hurts?\b",
         r"\btightness\s+in\s+(my\s+)?chest\b",
         r"\bchest\s+tightness\b",
+        # Spanish chest pain
+        r"\bdolor\s+(?:en\s+)?(?:el\s+)?pecho\b",
+        r"\bme\s+duele\s+el\s+pecho\b",
+        r"\bpresi[oó]n\s+(?:en\s+)?(?:el\s+)?pecho\b",
+        r"\bopresi[oó]n\s+(?:en\s+)?(?:el\s+)?pecho\b",
     )),
     EmergencyKeyword("breathing difficulty", "ESI-2", (
         r"\bcan'?t\s+breathe\b",
@@ -332,17 +369,29 @@ SAFETY_KEYWORDS_ESI2: tuple[EmergencyKeyword, ...] = (
         r"\bdifficulty\s+breathing\b",
         r"\bshort(ness)?\s+of\s+breath\b",
         r"\btrouble\s+breathing\b",
+        # Spanish breathing difficulty
+        r"\bno\s+puedo\s+respirar\b",
+        r"\bme\s+falta\s+(?:el\s+)?aire\b",
+        r"\bfalta\s+de\s+aire\b",
+        r"\bdificultad\s+(?:para|de)\s+respirar\b",
     )),
     EmergencyKeyword("cardiac concern", "ESI-2", (
         r"\bheart\s+attack\b",
         r"\bhaving\s+a\s+heart\b",
         r"\bcrushing\b",
         r"\bheart\s+is\s+(racing|pounding|fluttering)\b",
+        # Spanish cardiac concern
+        r"\bataque\s+al\s+coraz[oó]n\b",
+        r"\binfarto\b",
+        r"\bcoraz[oó]n\s+(?:me\s+)?(?:late|palpita|corre)\b",
     )),
     EmergencyKeyword("subjective dying", "ESI-2", (
         r"\bfeel\s+like\s+i\s*('?m|am)\s+dying\b",
         r"\bfeel\s+like\s+i\s*('?m|am)\s+going\s+to\s+die\b",
         r"\bsomething\s+is\s+(really\s+)?wrong\b",
+        # Spanish subjective dying / impending doom
+        r"\bsiento\s+que\s+(?:me\s+)?(?:voy\s+a\s+morir|me\s+muero)\b",
+        r"\balgo\s+(?:est[aá]\s+)?(?:muy\s+)?mal\b",
     )),
 )
 

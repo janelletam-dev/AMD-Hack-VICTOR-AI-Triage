@@ -86,6 +86,37 @@ _ELEMENT_QUESTIONS: dict[str, str] = {
     "lmp":         "When was your last menstrual period?",
 }
 
+# Spanish (US-clinical neutral, "usted" register). Used when the patient's
+# detected language is Spanish and JACKIE's LoRA produces broken or
+# stilted Spanish — the redundancy guard swaps in these clean templates.
+# Phrasings sourced from US-bilingual ED nursing convention; reviewed for
+# warmth + register, no machine-translation artefacts.
+_ELEMENT_QUESTIONS_ES: dict[str, str] = {
+    "onset":        "¿Cuándo empezó esto?",
+    "severity":     "Del 1 al 10, ¿qué tan fuerte es el dolor ahora?",
+    "quality":      "¿Cómo se siente el dolor — punzante, sordo, como presión, o ardor?",
+    "region":       "¿Dónde exactamente le molesta?",
+    "radiation":    "¿El dolor se mueve a otra parte — la mandíbula, el brazo, la espalda, o el hombro?",
+    "associated":   "¿Tiene otros síntomas — náuseas, sudor, falta de aire?",
+    "aggravating": "¿Hay algo que empeore el dolor?",
+    "alleviating": "¿Ha probado algo que lo mejore?",
+    "setting":     "¿Qué estaba haciendo cuando empezó esto?",
+    "pmh":         "¿Tiene alguna condición médica — diabetes, presión alta, problemas del corazón?",
+    "medications": "¿Está tomando algún medicamento ahora?",
+    "allergies":   "¿Tiene alguna alergia, sobre todo a medicamentos?",
+    "lmp":         "¿Cuándo fue su última menstruación?",
+}
+
+
+def _question_dict_for_language(language: str | None) -> dict[str, str]:
+    """Pick the right element-question dictionary for the patient's language.
+    Defaults to English when language is missing, unknown, or English.
+    Spanish resolves only on explicit 'es' / 'spa' codes (Deepgram returns
+    BCP-47 like 'es', 'es-MX', 'es-US')."""
+    if language and language.lower().startswith(("es", "spa")):
+        return _ELEMENT_QUESTIONS_ES
+    return _ELEMENT_QUESTIONS
+
 
 # Question patterns that indicate a JACKIE turn is asking about a particular
 # element. Matched against JACKIE's OUTPUT (her question to the patient).
@@ -129,26 +160,43 @@ def classify_question_element(question: str) -> str | None:
 
 
 _FAMILY_MEMBER_RE = re.compile(
-    r"\b(?:my\s+)?(dad|father|mom|mother|brother|sister|son|daughter|"
+    r"\b(?:my\s+|mi\s+)?(dad|father|mom|mother|brother|sister|son|daughter|"
     r"uncle|aunt|grandfather|grandpa|grandmother|grandma|cousin|wife|husband|"
-    r"partner)\b",
+    r"partner|"
+    # Spanish family members
+    r"pap[aá]|padre|mam[aá]|madre|hermano|hermana|hijo|hija|"
+    r"t[ií]o|t[ií]a|abuel[oa]|primo|prima|esposo|esposa|"
+    r"compa[ñn]er[oa])\b",
     re.IGNORECASE,
 )
 _FAMILY_EVENT_RE = re.compile(
     r"\b(heart attack|stroke|cancer|diabetes|died|passed|surgery|bypass|"
-    r"stent|cardiac\s+arrest)\b",
+    r"stent|cardiac\s+arrest|"
+    # Spanish events
+    r"infarto|ataque\s+al\s+coraz[oó]n|derrame|c[aá]ncer|"
+    r"muri[oó]|falleci[oó]|cirug[ií]a|operaci[oó]n)\b",
     re.IGNORECASE,
 )
-_AGE_RE = re.compile(r"\bat\s+(\d{1,3})\b|\bage\s+(?:of\s+)?(\d{1,3})\b", re.IGNORECASE)
+_AGE_RE = re.compile(
+    r"\bat\s+(\d{1,3})\b|\bage\s+(?:of\s+)?(\d{1,3})\b"
+    r"|\ba\s+los\s+(\d{1,3})\b|\bcuando\s+ten[ií]a\s+(\d{1,3})\b",
+    re.IGNORECASE,
+)
 _DURATION_RE = re.compile(
     r"\b(\d+\s*(?:min|minute|hour|hr|day|week|month|year)s?\s+ago)\b"
     r"|\b(yesterday|today|tonight|this\s+morning|last\s+night|last\s+week|last\s+month)\b"
-    r"|\b((?:twenty[-\s]?four|forty[-\s]?eight|seventy[-\s]?two)\s+hours?(?:\s+ago)?)\b",
+    r"|\b((?:twenty[-\s]?four|forty[-\s]?eight|seventy[-\s]?two)\s+hours?(?:\s+ago)?)\b"
+    # Spanish duration markers
+    r"|\b(ayer|anoche|hoy|esta\s+ma[ñn]ana|anteayer|la\s+semana\s+pasada)\b"
+    r"|\b(hace\s+(?:un[oa]?s?\s+)?\d*\s*(?:minutos?|horas?|d[ií]as?|semanas?|meses?|a[ñn]os?))\b",
     re.IGNORECASE,
 )
 _COMORBIDITY_RE = re.compile(
     r"\b(diabetes|diabetic|hypertension|high\s+blood\s+pressure|htn|"
-    r"cholesterol|asthma|copd|kidney\s+disease|heart\s+disease)\b",
+    r"cholesterol|asthma|copd|kidney\s+disease|heart\s+disease|"
+    # Spanish comorbidities
+    r"diab[eé]tic[oa]|hipertensi[oó]n|presi[oó]n\s+alta|"
+    r"colesterol|asma|enfermedad\s+(?:del\s+)?coraz[oó]n)\b",
     re.IGNORECASE,
 )
 
@@ -208,6 +256,10 @@ def extract_disclosed_facts(chief_complaint: str | None, history: Iterable[dict]
 def render_facts_block(facts: dict) -> str:
     """Render extract_disclosed_facts output as a prompt-ready string.
 
+    The header + closing instruction stay in English regardless of the
+    patient's language — JACKIE's system prompt is English, and these
+    are LoRA-facing instructions, not patient-facing utterances.
+
     Empty when facts is empty so callers can skip the block entirely
     rather than emit an unhelpful 'FACTS: none' header.
     """
@@ -225,7 +277,8 @@ def render_facts_block(facts: dict) -> str:
     lines.append(
         "If you reference any of these, use them VERBATIM. Do not change "
         "family member, age, outcome, or duration. Do not say 'passing "
-        "away' or 'died' unless the patient used those words first."
+        "away' / 'died' / 'falleció' / 'murió' unless the patient used "
+        "those words first."
     )
     return "\n".join(lines)
 
@@ -235,6 +288,7 @@ def replace_if_redundant(
     covered: set[str],
     remaining: list[str],
     previous_jackie_question: str | None = None,
+    language: str | None = None,
 ) -> tuple[str, bool]:
     """If `question` re-asks an element already covered, swap it for the
     canonical question on the first uncovered element from `remaining`.
@@ -246,32 +300,52 @@ def replace_if_redundant(
     normalised question text overlaps the previous turn by more than
     70% — strong signal the LoRA looped.
 
+    When `language` is Spanish, ALWAYS swap — the LoRA produces stilted
+    or literal-mistranslated Spanish (observed 2026-05-08: '¿Cuánto
+    cuesta el dolor en un 10?' meaning 'how much does the pain COST').
+    Forcing the swap routes every turn through the curated Spanish
+    templates so the patient never hears broken Spanish.
+
     Returns (final_question, was_replaced). When no redundancy is
     detected, or no remaining element has a canonical question, the
     original is returned unchanged.
     """
+    questions = _question_dict_for_language(language)
+    is_spanish = questions is _ELEMENT_QUESTIONS_ES
+
+    # Spanish force-swap — bypass the LoRA's potentially broken Spanish.
+    if is_spanish:
+        replacement = _next_canonical(remaining, covered, questions)
+        if replacement:
+            return replacement, True
+
     # Coverage-based redundancy
     target = classify_question_element(question)
     if target and target in covered:
-        replacement = _next_canonical(remaining, covered)
+        replacement = _next_canonical(remaining, covered, questions)
         if replacement:
             return replacement, True
 
     # Literal-repetition redundancy
     if previous_jackie_question and _is_near_duplicate(question, previous_jackie_question):
-        replacement = _next_canonical(remaining, covered)
+        replacement = _next_canonical(remaining, covered, questions)
         if replacement:
             return replacement, True
 
     return question, False
 
 
-def _next_canonical(remaining: list[str], covered: set[str]) -> str | None:
+def _next_canonical(
+    remaining: list[str],
+    covered: set[str],
+    questions: dict[str, str] | None = None,
+) -> str | None:
     """Return the canonical question for the first uncovered element."""
+    qs = questions if questions is not None else _ELEMENT_QUESTIONS
     for name in remaining:
         if name in covered:
             continue
-        canonical = _ELEMENT_QUESTIONS.get(name)
+        canonical = qs.get(name)
         if canonical:
             return canonical
     return None
