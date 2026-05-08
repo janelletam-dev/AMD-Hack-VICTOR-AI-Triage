@@ -37,18 +37,31 @@ def extract_covered(history: Iterable[dict]) -> set[str]:
 
     Only patient turns are scanned — J.A.C.K.I.E. asking about quality
     doesn't mean the patient answered.
+
+    Patterns are checked against BOTH the joined transcript (catches
+    multi-turn elaboration like 'chest pain ... twenty four hours ago')
+    AND each individual turn (catches anchored single-utterance answers
+    like a bare 'nine.' which shouldn't match 'nine years ago' embedded
+    in a longer narrative).
     """
-    text = " ".join(
+    patient_turns = [
         h.get("text", "").lower()
         for h in (history or [])
         if h.get("role") == "patient"
-    )
-    if not text.strip():
+    ]
+    patient_turns = [t for t in patient_turns if t.strip()]
+    if not patient_turns:
         return set()
+    joined = " ".join(patient_turns)
     covered: set[str] = set()
     for name, patterns in ELEMENTS.items():
         for p in patterns:
-            if re.search(p, text, re.IGNORECASE):
+            if re.search(p, joined, re.IGNORECASE):
+                covered.add(name)
+                break
+            # Anchored patterns (^...$) won't match the joined string;
+            # check each turn individually as a fallback.
+            if any(re.search(p, t, re.IGNORECASE) for t in patient_turns):
                 covered.add(name)
                 break
     return covered
@@ -113,6 +126,108 @@ def classify_question_element(question: str) -> str | None:
         if hits and (best is None or hits > best[1]):
             best = (name, hits)
     return best[0] if best else None
+
+
+_FAMILY_MEMBER_RE = re.compile(
+    r"\b(?:my\s+)?(dad|father|mom|mother|brother|sister|son|daughter|"
+    r"uncle|aunt|grandfather|grandpa|grandmother|grandma|cousin|wife|husband|"
+    r"partner)\b",
+    re.IGNORECASE,
+)
+_FAMILY_EVENT_RE = re.compile(
+    r"\b(heart attack|stroke|cancer|diabetes|died|passed|surgery|bypass|"
+    r"stent|cardiac\s+arrest)\b",
+    re.IGNORECASE,
+)
+_AGE_RE = re.compile(r"\bat\s+(\d{1,3})\b|\bage\s+(?:of\s+)?(\d{1,3})\b", re.IGNORECASE)
+_DURATION_RE = re.compile(
+    r"\b(\d+\s*(?:min|minute|hour|hr|day|week|month|year)s?\s+ago)\b"
+    r"|\b(yesterday|today|tonight|this\s+morning|last\s+night|last\s+week|last\s+month)\b"
+    r"|\b((?:twenty[-\s]?four|forty[-\s]?eight|seventy[-\s]?two)\s+hours?(?:\s+ago)?)\b",
+    re.IGNORECASE,
+)
+_COMORBIDITY_RE = re.compile(
+    r"\b(diabetes|diabetic|hypertension|high\s+blood\s+pressure|htn|"
+    r"cholesterol|asthma|copd|kidney\s+disease|heart\s+disease)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_disclosed_facts(chief_complaint: str | None, history: Iterable[dict] | None = None) -> dict:
+    """Extract canonical facts from the chief complaint + patient turns.
+
+    Returns a dict suitable for rendering as a FACTS block in the LLM
+    prompt. Keys present only when matches were found — no fabricated
+    placeholders. Used by audio_ws to inject a structured fact block
+    into JACKIE's prompt so the LoRA can't drift the family member,
+    age, or outcome (observed bug: 'dad had heart attack at 50' →
+    'mom passing away at 50').
+    """
+    text_parts: list[str] = []
+    if chief_complaint and chief_complaint.strip():
+        text_parts.append(chief_complaint.strip())
+    for h in (history or []):
+        if h.get("role") == "patient" and h.get("text"):
+            text_parts.append(h["text"].strip())
+    text = " ".join(text_parts)
+    if not text.strip():
+        return {}
+
+    facts: dict[str, list[str]] = {}
+
+    # Family-history fragments — keep the verbatim phrasing the patient
+    # used (e.g. "my dad had a heart attack at 50"). One fact per
+    # sentence containing both a family member AND an event.
+    family_facts: list[str] = []
+    for sentence in re.split(r"[.!?]\s+", text):
+        if _FAMILY_MEMBER_RE.search(sentence) and _FAMILY_EVENT_RE.search(sentence):
+            cleaned = sentence.strip().rstrip(".!?,")
+            if cleaned and cleaned not in family_facts:
+                family_facts.append(cleaned)
+    if family_facts:
+        facts["family_history"] = family_facts
+
+    # Comorbidities — surface unique, lowered.
+    comorbs = sorted({m.group(0).lower() for m in _COMORBIDITY_RE.finditer(text)})
+    if comorbs:
+        facts["comorbidities"] = comorbs
+
+    # Duration — first hit only (chief complaint usually establishes it).
+    dur_match = _DURATION_RE.search(text)
+    if dur_match:
+        facts["duration"] = next((g for g in dur_match.groups() if g), "").strip()
+
+    # Chief complaint verbatim — first 200 chars, single line.
+    if chief_complaint and chief_complaint.strip():
+        cc = " ".join(chief_complaint.strip().split())
+        facts["chief_complaint_verbatim"] = cc[:200]
+
+    return facts
+
+
+def render_facts_block(facts: dict) -> str:
+    """Render extract_disclosed_facts output as a prompt-ready string.
+
+    Empty when facts is empty so callers can skip the block entirely
+    rather than emit an unhelpful 'FACTS: none' header.
+    """
+    if not facts:
+        return ""
+    lines = ["PATIENT-DISCLOSED FACTS (must not be altered or invented beyond):"]
+    if facts.get("chief_complaint_verbatim"):
+        lines.append(f'- chief complaint (verbatim): "{facts["chief_complaint_verbatim"]}"')
+    if facts.get("duration"):
+        lines.append(f"- duration: {facts['duration']}")
+    if facts.get("comorbidities"):
+        lines.append(f"- comorbidities: {', '.join(facts['comorbidities'])}")
+    for fh in facts.get("family_history", []):
+        lines.append(f'- family history: "{fh}"')
+    lines.append(
+        "If you reference any of these, use them VERBATIM. Do not change "
+        "family member, age, outcome, or duration. Do not say 'passing "
+        "away' or 'died' unless the patient used those words first."
+    )
+    return "\n".join(lines)
 
 
 def replace_if_redundant(

@@ -11,63 +11,95 @@ Full session log:
 - Final SOAP note from S.C.R.I.B.E.
 - Standard ESI vs V.I.C.T.O.R.-adjusted ESI
 
-OUTPUT — MARKDOWN REPORT WITH THESE SECTIONS
+OUTPUT FORMAT
+Markdown report with the section headers below, in this exact order. Each header is followed by your generated content — DO NOT echo any of the section-rule text in this prompt as visible output. The rules describe what to write, not what to print.
 
-# Triage Encounter Report
-## Presenting Complaint
-Patient's chief complaint in plain English, with detected language.
+SECTION RULES (these describe content; do not output the rules themselves)
 
-## Triage Decision
-| | Score | Reasoning |
-|---|---|---|
-| Standard ESI | X | text-based triage from chief complaint |
-| V.I.C.T.O.R.-adjusted ESI | Y | concordance + biomarker evidence |
+  ## Presenting Complaint
+  → Write the patient's chief complaint in plain English (1-2 sentences).
+    Note detected language if non-English.
 
-## Voice Biomarker Summary
-Trajectory across the session. Note peaks and direction of travel.
+  ## Triage Decision
+  → Render this exact 3-row markdown table, substituting the actual ESI
+    numbers from the session log (no placeholders):
+      | | Score | Reasoning |
+      |---|---|---|
+      | Standard ESI | <number> | <one-clause reason> |
+      | V.I.C.T.O.R.-adjusted ESI | <number> | <one-clause reason> |
 
-## Concordance Flags
-Each flag with timestamp, trigger phrase, biomarker signal, M.E.R.C.E.D. gloss.
+  ## Voice Biomarker Summary
+  → 2-4 sentences on the biomarker trajectory across the session.
+    Note any peaks and the direction of travel (rising, falling, stable).
 
-## SOAP Note
-Final S/O/A/P from S.C.R.I.B.E.
+  ## Concordance Flags
+  → For EACH fired concordance flag, render: timestamp, trigger phrase
+    (in quotes), biomarker signal, M.E.R.C.E.D. gloss. Use bullet points.
+    If no flags fired, write "None fired during this encounter."
 
-## Evidence Base — MIMIC-IV
-Cite the relevant MIMIC-IV pattern. Format: "Analysis of N cardiovascular cases shows that [complaint] presentations receive mean acuity scores of X, compared to Y for chest pain presentations, despite equivalent cardiovascular diagnoses."
+  ## SOAP Note
+  → Render the final S.C.R.I.B.E. SOAP using **S:**, **O:**, **A:**, **P:**
+    bold prefixes. Pull verbatim from the session log's `soap` field.
 
-## Scientific Basis — Voice Biomarkers (peer-reviewed)
-This section is REQUIRED whenever at least one concordance flag fired with a biomarker signal. Skip only if no biomarker-driven flag was raised.
+  ## Evidence Base — MIMIC-IV
+  → Write ONE sentence in this shape, with all placeholders substituted:
+    "Analysis of <N> cardiovascular cases in MIMIC-IV-ED shows that
+    <patient's complaint type> presentations receive mean acuity
+    <X>, compared to <Y> for direct chest-pain presentations,
+    despite equivalent cardiovascular diagnoses."
+    Numbers (N, X, Y) must come from M.E.R.C.E.D.'s gloss seeds in the
+    session log — never invent. If the gloss seed is unavailable, write
+    "Anchored to MIMIC-IV-ED triage acuity literature; specific n
+    pending V2 prospective validation."
 
-Cite from prompts/references.json. Match each citation to the signal it supports (use the `supports` tags in the JSON). The four available references and when to use each:
+  ## Scientific Basis — Voice Biomarkers (peer-reviewed)
+  → REQUIRED whenever at least one concordance flag fired with a
+    biomarker signal. Cite from prompts/references.json (provided in
+    the user message). Match each citation to the signal it supports
+    via the `supports` tag. The four available references:
+    - Sara et al., Mayo Clinic Proceedings 2022 — coronary risk /
+      chest-pain-equivalent symptoms.
+    - Maor et al., JAHA 2020 — concerning biomarker trajectory,
+      older patients, HF history.
+    - Amir et al., PLOS ONE 2020 — mechanism (voice as SNS readout).
+    - Gómez-Gómez et al. meta-analysis 2024 — female patient AND
+      spontaneous speech (V.I.C.T.O.R.'s default setup).
+    Format: 2-4 sentence prose citing 1-3 papers via inline short-cite
+    (e.g. "Sara et al., Mayo Clinic Proceedings 2022"). Do not
+    overstate; these are observational / cohort findings, not RCT-grade
+    causal proof. Pair each citation with patient-specific reasoning.
+    Skip the entire section only if no biomarker-driven flag was raised.
 
-- **Sara et al., Mayo Clinic Proceedings 2022** — cite when the patient presents with chest-pain-equivalent symptoms or the concordance flag points to coronary risk. 108-patient prospective cohort; high voice biomarker score predicted ER chest-pain visits, positive stress tests, and confirmed coronary artery blockage at 24-month follow-up.
-- **Maor et al., JAHA 2020** — cite when biomarker trajectory is concerning across the session, especially for older patients or those with HF history. 10,583-patient cohort; vocal biomarker independently predicted hospitalisation and all-cause mortality.
-- **Amir et al., PLOS ONE 2020** — cite when explaining the mechanism (voice as a sympathetic-nervous-system readout).
-- **Gómez-Gómez et al. meta-analysis 2024** — cite whenever the patient is female and the kiosk captured spontaneous speech (i.e. always, in V.I.C.T.O.R.'s setup). Establishes that stress→vocal-pitch effect is significantly stronger in women and during spontaneous speech — V.I.C.T.O.R.'s exact context.
+  ## References
+  → List every paper cited in `## Scientific Basis` with full
+    bibliographic detail and URL, in the order they appear. Pull
+    bibliographic strings VERBATIM from prompts/references.json —
+    do not paraphrase.
 
-Format example (for a female patient with abdominal pain + elevated stress biomarkers):
+  ## Recommended Disposition
+  → ONE paragraph (3-5 sentences) of concrete next steps. No headers,
+    no bullets inside this paragraph. Address: immediate workup
+    orders, monitoring plan, disposition (admit/observe/discharge),
+    clinician-confirmation requirement.
 
-> Voice biomarker analysis detected elevated stress markers in this patient's speech. Peer-reviewed research (Sara et al., Mayo Clinic Proceedings 2022) has demonstrated that elevated vocal biomarkers — including pitch variability, jitter, and shimmer — are predictive of coronary artery disease events at 24-month follow-up. A separate meta-analysis (Gómez-Gómez et al. 2024) found this effect is significantly stronger in women during spontaneous speech, which matches this patient's presentation.
+  ## Limitations
+  → Render exactly these three bullets:
+    - MIMIC-IV is single-institution (Beth Israel Deaconess, Boston).
+    - Dataset only contains diagnosed CVD — true bias likely worse.
+    - This report augments, does not replace, clinical judgment.
 
-Constraints when citing:
-- Do not overstate. These are observational / cohort findings, not RCT-grade causal proof.
-- Do not cite a paper for a claim the paper does not support — match `supports` tags.
-- Pair scientific citation with patient-specific reasoning. The literature contextualises the flag; it does not replace the clinical thinking.
+EXAMPLE OF A CORRECT EVIDENCE-BASE LINE (so the LoRA learns the shape)
+For a patient with verbal-minimisation flag in CVD cohort:
 
-## References
-List every paper cited in `## Scientific Basis` with full bibliographic detail and URL, in the order they appear. Pull bibliographic strings from `prompts/references.json` — do not paraphrase.
-
-## Recommended Disposition
-One paragraph. Concrete next steps.
-
-## Limitations
-- MIMIC-IV is single-institution (Beth Israel Deaconess, Boston).
-- Dataset only contains diagnosed CVD — true bias likely worse.
-- This report augments, does not replace, clinical judgment.
+  Analysis of 540 cardiovascular cases in MIMIC-IV-ED shows that
+  verbal-minimisation presentations receive mean acuity 2.80,
+  compared to 2.10 for direct chest-pain presentations, despite
+  equivalent cardiovascular diagnoses.
 
 CONSTRAINTS
 - Latency budget: <5s.
 - Markdown only. No HTML.
 - Never expose individual MIMIC-IV patient data.
-- All numerical claims must be sourced from the session log, the grounding facts in M.E.R.C.E.D.'s prompt, or prompts/references.json.
-- Citation format is the inline parenthetical short-cite (e.g. "Sara et al., Mayo Clinic Proceedings 2022") in prose; full bibliographic entries belong only in the `## References` section.
+- All numerical claims must be sourced from the session log, M.E.R.C.E.D.'s gloss seeds, or prompts/references.json.
+- Citation format is the inline parenthetical short-cite ("Sara et al., Mayo Clinic Proceedings 2022") in prose; full bibliographic entries belong only in `## References`.
+- DO NOT echo any phrase from the SECTION RULES above into the rendered report. The rules describe what to write; they are not output. If you find yourself printing "Cite the relevant" / "One paragraph. Concrete next steps." / "Format:" / "Each flag with timestamp" / "List every paper cited" — STOP and write the actual content instead.

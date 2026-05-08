@@ -195,6 +195,14 @@ ELEMENTS: dict[str, list[str]] = {
         r"\b(?:probably|maybe|like|about|around|say|sometimes)\s+(?:an?\s+)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b",
         r"\b(?:it'?s|that'?s)\s+(?:a\s+)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b",
         r"\b(hurts?\s+a\s+lot|really\s+hurts?|quite\s+painful|manageable|bearable|tolerable)\b",
+        # Bare-numeric answer to a 1-10 question. Matches ONLY when the
+        # entire patient utterance is a stand-alone number (or "it's a
+        # nine") — the ^...$ anchors with optional surrounding whitespace
+        # keep this conservative. Without this pattern, a one-word answer
+        # like "nine." doesn't mark severity as covered, and JACKIE
+        # re-asks "on a scale of 1 to 10..." (observed bug from
+        # scenario 1 verbatim, 2026-05-08).
+        r"^\s*(?:it'?s\s+(?:a\s+)?)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)[\s.!?]*$",
     ],
     "quality": [
         r"\b(sharp|dull|burning|stabbing|crushing|pressure|tight(ness)?|"

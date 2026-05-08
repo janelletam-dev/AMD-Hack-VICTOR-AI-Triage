@@ -41,9 +41,12 @@ function ViewToggle() {
 
   return (
     <div style={{
-      // Bottom-center, sitting just above the fixed kiosk/EpicStatus footer.
-      // Made compact so it doesn't crowd content on either side.
-      position: "fixed", bottom: 84, left: "50%", transform: "translateX(-50%)",
+      // Bottom-LEFT, sitting just above the fixed kiosk/EpicStatus footer.
+      // Was bottom-center, but the centered position overlapped the
+      // dashboard's Approve/Edit/Downgrade button row at common viewport
+      // widths. Left-anchored stays clear of both the centered action
+      // footer and the right-side Swarm column.
+      position: "fixed", bottom: 84, left: 24,
       background: "rgba(21, 27, 45, 0.92)",
       backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
       border: "1px solid rgba(47, 217, 244, 0.25)",

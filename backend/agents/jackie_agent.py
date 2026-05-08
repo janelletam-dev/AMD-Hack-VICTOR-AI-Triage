@@ -93,6 +93,7 @@ class JackieAgent:
         chief_complaint: str | None = None,
         coverage_covered: set[str] | None = None,
         coverage_remaining: list[str] | None = None,
+        facts_block: str | None = None,
     ) -> str:
         """Generate the next interviewer turn. Returns plain text for TTS.
 
@@ -163,14 +164,17 @@ class JackieAgent:
             # instruction here (rather than baked into the system
             # prompt) lets us tweak per-turn behaviour like ESCALATED
             # mode without changing the system prompt mid-stream.
+            facts_section = f"\n\n{facts_block}\n" if facts_block else ""
             user = (
-                f"{mode}{coverage_block}\n"
+                f"{mode}{coverage_block}{facts_section}\n"
                 f"Patient just said ({language}): {transcript!r}\n\n"
                 "Generate ONE follow-up turn. Acknowledge briefly if the "
                 "patient revealed something new, then ask exactly ONE "
                 "clinically relevant question THAT HAS NOT ALREADY BEEN "
                 "ASKED OR ANSWERED in the conversation above. Pick from "
                 "NEXT PRIORITIES if a coverage block was provided. "
+                "Respect PATIENT-DISCLOSED FACTS verbatim — do not change "
+                "family member, age, outcome, or duration. "
                 "Reply in the same language as the patient. <30 words. "
                 "No clinical jargon. Follow the EDGE-CASE HANDLING rules "
                 "in the system prompt for off-topic, vague, frustrated, "

@@ -30,6 +30,7 @@ from services.clinical_knowledge import (
 )
 from services.coverage_tracker import (
     extract_covered, extract_negatives, priority_order, replace_if_redundant,
+    extract_disclosed_facts, render_facts_block,
 )
 from services.deepgram_service import DeepgramService, Transcript
 from services.event_bus import bus
@@ -581,6 +582,12 @@ async def audio_ws(
                 (state.get("complaint_text") or "")[:60],
                 state.get("gender"),
             )
+            facts_block = render_facts_block(
+                extract_disclosed_facts(
+                    state.get("complaint_text") or None,
+                    history_snapshot,
+                )
+            )
             text = await swarm.jackie.respond(
                 patient_utterance,
                 language=language,
@@ -589,6 +596,7 @@ async def audio_ws(
                 chief_complaint=state.get("complaint_text") or None,
                 coverage_covered=covered,
                 coverage_remaining=remaining,
+                facts_block=facts_block,
             )
             # Redundancy guard — even with the COVERAGE block in the prompt,
             # the LoRA occasionally re-asks ground the patient already

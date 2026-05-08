@@ -63,16 +63,19 @@ function buildDemographics(identity, flagQueue) {
   if (age != null) demoParts.push(`${age}y`);
   if (identity.gender) demoParts.push(identity.gender);
 
-  // Presenting symptom: prefer concordance flag's clinical label if
-  // fired (more specific than raw complaint text), fall back to the
-  // captured complaint truncated.
+  // Presenting symptom: prefer SCRIBE's distilled chief-complaint shorthand
+  // ("Chest pain x 24h, pressure-like, L arm pain") — same string the
+  // IdentityCard's REASON FOR VISIT line uses, so the SOAP card's header
+  // matches the chart header. Falls back to the concordance flag's clinical
+  // label, then to a truncated raw complaint as last resort.
   const topFlag = flagQueue && flagQueue[0];
+  const ccShort = (identity.chief_complaint_short || "").trim();
   const symptomFromFlag = topFlag?.triage_label;
   const complaintText = (identity.complaint || "").trim();
   const symptomFromComplaint = complaintText
     ? (complaintText.length > 40 ? complaintText.slice(0, 40) + "…" : complaintText)
     : null;
-  const symptom = symptomFromFlag || symptomFromComplaint || null;
+  const symptom = ccShort || symptomFromFlag || symptomFromComplaint || null;
 
   // Risk: ONLY surface real concordance signals. No "High CVD Risk Profile"
   // before the patient's been asked about family history. If a Tier 1/2
@@ -518,7 +521,16 @@ export default function ClinicianDashboard() {
               onUpdate={(newSoap) => setSoap({ ...newSoap, ready: true })}
             />
 
-            <SOAPCard soap={soap} demographics={buildDemographics(identity, flagQueue)} clinicianAddendum={clinicianAddendum} esi={esi} flags={flagQueue} />
+            <SOAPCard
+              soap={soap}
+              demographics={buildDemographics(identity, flagQueue)}
+              clinicianAddendum={clinicianAddendum}
+              esi={esi}
+              flags={flagQueue}
+              onPushToEpic={pushToEpic}
+              pushing={pushing}
+              pushed={!!pushReceipt}
+            />
 
             <ScientificBasisCard />
 

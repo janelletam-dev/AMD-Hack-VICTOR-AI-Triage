@@ -1,4 +1,7 @@
-export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum, esi, flags }) {
+export default function SOAPCard({
+  soap, vitals, demographics, clinicianAddendum, esi, flags,
+  onPushToEpic, pushing, pushed,
+}) {
   const subjectiveText = soap?.subjective || "";
   const objectiveText = soap?.objective || "";
   const assessmentText = soap?.assessment || "";
@@ -172,6 +175,46 @@ export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum
           </ul>
         </Section>
       </div>
+
+      {onPushToEpic && (
+        <div style={{
+          marginTop: 16, paddingTop: 14,
+          borderTop: "1px solid rgba(69, 70, 77, 0.3)",
+          display: "flex", justifyContent: "flex-end",
+          alignItems: "center", gap: 12, flexWrap: "wrap",
+        }}>
+          <span style={{
+            fontSize: 11, color: "var(--vic-on-surface-variant)",
+            fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: "0.06em",
+          }}>
+            Push the chart that builds the FHIR DocumentReference →
+          </span>
+          <button
+            type="button"
+            onClick={onPushToEpic}
+            disabled={pushing || pushed || !soap?.ready}
+            style={{
+              padding: "10px 18px", borderRadius: 10, border: "none",
+              fontFamily: "'Space Grotesk', sans-serif",
+              fontWeight: 700, fontSize: 13,
+              letterSpacing: "-0.01em",
+              cursor: (pushing || pushed || !soap?.ready) ? "not-allowed" : "pointer",
+              background: pushed
+                ? "linear-gradient(to right, #1f7a3a, #2ea35a)"
+                : (soap?.ready ? "linear-gradient(to right, var(--vic-primary), #008ea1)" : "var(--vic-bg-highest)"),
+              color: pushed ? "#9be7b1" : (soap?.ready ? "var(--vic-on-primary)" : "var(--vic-on-surface-variant)"),
+              boxShadow: (soap?.ready && !pushed && !pushing) ? "0 6px 18px rgba(47, 217, 244, 0.25)" : "none",
+            }}
+          >
+            {pushed
+              ? "✓ Approved & pushed to Epic"
+              : pushing
+                ? "Pushing to Epic…"
+                : "☁ Approve & Push to Epic"}
+          </button>
+        </div>
+      )}
 
       <div style={{
         marginTop: 18, paddingTop: 14,

@@ -20,6 +20,50 @@ PROMPT = (PROMPTS_DIR / "elmer_system.txt").read_text()
 REFERENCES = json.loads((PROMPTS_DIR / "references.json").read_text())
 
 
+# Lines that match these patterns are SECTION RULES from the system prompt
+# that the LoRA sometimes echoes verbatim into the rendered report instead
+# of treating them as instructions. Strip them post-generation as a safety
+# net — the prompt-level fix in elmer_system.txt is the primary mitigation;
+# this catches anything that slips through.
+import re as _re
+_INSTRUCTION_LEAK_PATTERNS = [
+    _re.compile(r"^\s*Cite the relevant", _re.IGNORECASE),
+    _re.compile(r"^\s*One paragraph\.?\s+(?:Concrete next steps|3-5 sentences)", _re.IGNORECASE),
+    _re.compile(r"^\s*Format:\s*[\"“]", _re.IGNORECASE),
+    _re.compile(r"^\s*Each flag with timestamp", _re.IGNORECASE),
+    _re.compile(r"^\s*List every paper cited", _re.IGNORECASE),
+    _re.compile(r"^\s*Trajectory across the session\.", _re.IGNORECASE),
+    _re.compile(r"^\s*Patient'?s chief complaint in plain English", _re.IGNORECASE),
+    _re.compile(r"^\s*Final S/O/A/P from S\.C\.R\.I\.B\.E\.", _re.IGNORECASE),
+    _re.compile(r"^\s*This section is REQUIRED whenever", _re.IGNORECASE),
+]
+
+
+def _strip_instruction_leaks(markdown: str) -> str:
+    """Remove lines that are SECTION-RULE text leaked verbatim from the
+    system prompt. Preserves blank lines and content lines untouched.
+    """
+    if not markdown:
+        return markdown
+    out: list[str] = []
+    for line in markdown.splitlines():
+        if any(p.match(line) for p in _INSTRUCTION_LEAK_PATTERNS):
+            continue
+        out.append(line)
+    # Collapse runs of >2 blank lines that may result from stripping
+    cleaned: list[str] = []
+    blank_run = 0
+    for line in out:
+        if not line.strip():
+            blank_run += 1
+            if blank_run > 2:
+                continue
+        else:
+            blank_run = 0
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 class ElmerAgent:
     name = "E.L.M.E.R."
 
@@ -70,7 +114,7 @@ class ElmerAgent:
         """Match the ReportResponse shape in routers/reports.py."""
         esi = session_log.get("esi") or {}
         return {
-            "report": report_md,
+            "report": _strip_instruction_leaks(report_md),
             "esi_standard": int(esi.get("standard") or 0),
             "esi_adjusted": int(esi.get("adjusted") or 0),
             "flags": session_log.get("flags") or [],

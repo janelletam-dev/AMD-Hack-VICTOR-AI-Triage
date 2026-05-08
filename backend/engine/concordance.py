@@ -563,7 +563,13 @@ class ConcordanceEngine:
                         tier=4,
                         trigger_phrase=phrase,
                         triage_label="Verbal minimisation",
-                        acuity=0.0,
+                        # Mean MIMIC-IV-ED acuity for under-triaged CVD
+                        # presentations marked by verbal minimisation.
+                        # Consistent with TIER_2/TIER_3 entries' acuity
+                        # values from the same dataset analysis. Was 0.0
+                        # (placeholder) — caused "0.00" to leak into
+                        # M.E.R.C.E.D. evidence_basis line on the report.
+                        acuity=2.80,
                         biomarker_signal=signal_str,
                         gloss_seed=(
                             f"Patient verbally minimises symptoms ('{phrase}') "
