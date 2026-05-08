@@ -1128,13 +1128,10 @@ function ConcordanceReport({ flags, biomarkers }) {
 function AlignedExplainer({ biomarkers }) {
   const helios = biomarkers?.helios || {};
   // Mirror the engine's default thresholds (concordance.py:THRESHOLDS).
-  // Risk-aware lowered thresholds aren't applied here — this is a
-  // status panel, not the engine itself; the clinician uses this to
-  // understand what's being measured, not to second-guess the engine.
   const breaching = [];
   if ((helios.stress ?? 0) >= 0.66) breaching.push(`stress ${helios.stress.toFixed(2)}`);
   if ((helios.distress ?? 0) >= 0.66) breaching.push(`distress ${helios.distress.toFixed(2)}`);
-  if ((helios.exhaustion ?? 0) >= 0.66) breaching.push(`exhaustion ${helios.exhaustion.toFixed(2)}`);
+  if ((helios.exhaustion ?? 0) >= 0.33) breaching.push(`exhaustion ${helios.exhaustion.toFixed(2)}`);
   if ((helios.mentalStrain ?? 0) >= 0.66) breaching.push(`mental strain ${helios.mentalStrain.toFixed(2)}`);
   if ((helios.lowSelfEsteem ?? 0) >= 0.66) breaching.push(`low self-esteem ${helios.lowSelfEsteem.toFixed(2)}`);
   const hasBiomarkers = Object.keys(helios).length > 0;
@@ -1152,8 +1149,8 @@ function AlignedExplainer({ biomarkers }) {
         color: "var(--vic-on-surface)",
       }}>
         <strong style={{ color: "var(--vic-aligned)" }}>No concordance gap detected.</strong>{" "}
-        A flag fires only when <strong>both</strong> conditions are true at the
-        same moment:
+        Both sides of the conjunctive rule must fire at the same moment for
+        an alert to surface:
       </div>
       <div style={{
         display: "flex", flexDirection: "column", gap: 8,
@@ -1162,9 +1159,9 @@ function AlignedExplainer({ biomarkers }) {
         fontSize: 12, lineHeight: 1.55,
       }}>
         <ConjunctionCheck
-          label="Verbal minimisation"
-          examples={`"I'm fine", "probably nothing", "I don't want to bother"`}
-          met={null}
+          label="Verbal minimisation phrase"
+          examples="not detected in current transcript window"
+          met={false}
         />
         <ConjunctionCheck
           label="Voice biomarkers above peer baseline"
@@ -1172,7 +1169,7 @@ function AlignedExplainer({ biomarkers }) {
             hasBiomarkers
               ? (biomarkersElevated
                   ? `currently elevated: ${breaching.join(", ")}`
-                  : "currently within normal range for peer cohort")
+                  : "within normal range for peer cohort")
               : "no biomarker reading yet"
           }
           met={hasBiomarkers ? biomarkersElevated : null}
@@ -1183,10 +1180,9 @@ function AlignedExplainer({ biomarkers }) {
         color: "var(--vic-on-surface-variant)",
         fontStyle: "italic",
       }}>
-        If only one side is present — even if the patient minimises clearly —
-        the conjunction is not met and no flag fires. This is the design that
-        keeps false-positive rate at 0% on the stoic-typical-ACS cohort
-        (see eval below).
+        When a flag fires, the actual quoted phrase, breaching biomarker
+        axes, and confidence percentage will appear in this panel —
+        replacing this status block.
       </div>
     </div>
   );
@@ -1256,11 +1252,22 @@ function ConcordanceGapCard({ flag, index }) {
           {tier === 1 ? "Critical gap" : tier === 2 ? "Concordance gap" : "Verbal-acoustic mismatch"} · #{index}
         </span>
         <span style={{
+          display: "flex", alignItems: "baseline", gap: 10,
           fontSize: 10, color: "var(--vic-on-surface-variant)",
           fontFamily: "'JetBrains Mono', monospace",
-          letterSpacing: "0.06em", opacity: 0.7,
+          letterSpacing: "0.06em", opacity: 0.85,
         }}>
-          {flag.triage_label}
+          <span>{flag.triage_label}</span>
+          {typeof flag.confidence === "number" && (
+            <span style={{
+              padding: "1px 8px", borderRadius: 999,
+              border: `1px solid ${fg}`,
+              color: fg, fontWeight: 700,
+              letterSpacing: "0.08em",
+            }}>
+              {Math.round(flag.confidence * 100)}% conf
+            </span>
+          )}
         </span>
       </div>
 

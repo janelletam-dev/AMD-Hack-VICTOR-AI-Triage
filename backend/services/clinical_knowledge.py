@@ -183,6 +183,14 @@ HPI_DIMENSIONS: dict[str, str] = {
 ELEMENTS: dict[str, list[str]] = {
     "onset": [
         r"\b\d+\s*(min|minute|hour|hr|day|week|month|year)s?\s+ago\b",
+        # "an hour ago" / "a few days ago" / "one minute ago" — patient
+        # answers with English number words instead of digits. Without
+        # this, JACKIE re-asked onset (observed scenario 2 verbatim
+        # 2026-05-08: patient said "an hour ago" in Q1, JACKIE re-asked
+        # in Q2 because the digits-only pattern missed the answer).
+        r"\b(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"a\s+few|a\s+couple\s+(?:of\s+)?|several)\s+"
+        r"(min|minute|hour|hr|day|week|month|year)s?\s+ago\b",
         r"\b(yesterday|today|tonight|this\s+morning|last\s+night|last\s+week|last\s+month)\b",
         r"\b(since|started|began|onset|came\s+on)\b",
         r"\b(suddenly|gradually|all\s+of\s+a\s+sudden)\b",

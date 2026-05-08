@@ -234,24 +234,88 @@ def replace_if_redundant(
     question: str,
     covered: set[str],
     remaining: list[str],
+    previous_jackie_question: str | None = None,
 ) -> tuple[str, bool]:
     """If `question` re-asks an element already covered, swap it for the
     canonical question on the first uncovered element from `remaining`.
 
-    Returns (final_question, was_replaced). When no redundancy is detected,
-    or no remaining element has a canonical question, the original is
-    returned unchanged.
+    Also catches LITERAL repetition of JACKIE's previous question — the
+    LoRA occasionally repeats itself verbatim or near-verbatim across
+    turns (observed scenario 2 2026-05-08: 'What makes it an 8?'
+    asked twice in a row). The duplicate-question guard fires when the
+    normalised question text overlaps the previous turn by more than
+    70% — strong signal the LoRA looped.
+
+    Returns (final_question, was_replaced). When no redundancy is
+    detected, or no remaining element has a canonical question, the
+    original is returned unchanged.
     """
+    # Coverage-based redundancy
     target = classify_question_element(question)
-    if not target or target not in covered:
-        return question, False
+    if target and target in covered:
+        replacement = _next_canonical(remaining, covered)
+        if replacement:
+            return replacement, True
+
+    # Literal-repetition redundancy
+    if previous_jackie_question and _is_near_duplicate(question, previous_jackie_question):
+        replacement = _next_canonical(remaining, covered)
+        if replacement:
+            return replacement, True
+
+    return question, False
+
+
+def _next_canonical(remaining: list[str], covered: set[str]) -> str | None:
+    """Return the canonical question for the first uncovered element."""
     for name in remaining:
         if name in covered:
             continue
         canonical = _ELEMENT_QUESTIONS.get(name)
         if canonical:
-            return canonical, True
-    return question, False
+            return canonical
+    return None
+
+
+def _normalise_question(text: str) -> str:
+    """Strip common JACKIE openers, lowercase, collapse whitespace, drop
+    punctuation. Used by _is_near_duplicate so cosmetic differences like
+    'Got it. ' vs 'Okay, ' don't mask a literal-repeat question."""
+    if not text:
+        return ""
+    t = text.lower().strip()
+    # Strip leading acknowledgements that the LoRA varies between turns
+    # but mean the same thing.
+    t = re.sub(
+        r"^\s*(?:got it|okay|ok|alright|right|mm-?hmm|i hear you|"
+        r"that helps|that makes sense|thank you for sharing|thanks)"
+        r"[\s,.!]+",
+        "", t, flags=re.IGNORECASE,
+    )
+    # Drop punctuation; collapse whitespace.
+    t = re.sub(r"[^\w\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _is_near_duplicate(a: str, b: str) -> bool:
+    """Return True when two normalised questions overlap by ≥70% of the
+    longer one's characters. Conservative threshold avoids swapping
+    legitimate follow-up probes that happen to share vocabulary."""
+    na, nb = _normalise_question(a), _normalise_question(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    # Cheap shared-token ratio over the longer question.
+    longer = na if len(na) >= len(nb) else nb
+    shorter = nb if longer is na else na
+    longer_tokens = longer.split()
+    shorter_tokens = set(shorter.split())
+    if not longer_tokens:
+        return False
+    overlap = sum(1 for tok in longer_tokens if tok in shorter_tokens)
+    return overlap / len(longer_tokens) >= 0.70
 
 
 # NegEx-style negation triggers (Chapman et al, JBI 2001). Restricted

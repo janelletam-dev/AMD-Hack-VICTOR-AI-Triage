@@ -605,10 +605,18 @@ async def audio_ws(
             # "diabetes, high blood pressure"). Classify the LLM's question
             # against OPQRST/SAMPLE; if it targets a covered element, swap
             # in the canonical question for the first remaining priority.
-            text, swapped = replace_if_redundant(text, covered, remaining)
+            previous_jackie = next(
+                (h.get("text") for h in reversed(history_snapshot)
+                 if h.get("role") == "jackie"),
+                None,
+            )
+            text, swapped = replace_if_redundant(
+                text, covered, remaining,
+                previous_jackie_question=previous_jackie,
+            )
             if swapped:
                 log.info(
-                    "session=%s jackie redundancy: LLM asked covered ground; swapped to next-priority canonical question",
+                    "session=%s jackie redundancy: LLM asked covered ground or repeated prior question; swapped to next-priority canonical",
                     session_id,
                 )
             state["jackie_history"].append({"role": "patient", "text": patient_utterance})

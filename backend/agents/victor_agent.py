@@ -157,8 +157,25 @@ class VictorAgent:
             "age": age,
         }
         if not flags:
-            # No concordance — still update SOAP from transcript + biomarkers.
-            await self._scribe_step(room, transcript, biomarkers, [], None, patient_ctx)
+            # No concordance flags — still publish a default ESI so the
+            # dashboard isn't stuck on "Awaiting evidence" for cases like
+            # the ankle-pain negative control. Standard ESI defaults to 3
+            # via _DEFAULT_STANDARD_ESI lookup; adjusted = standard with
+            # "No adjustment" reason. Then update SOAP and exit.
+            esi_default = await self.decide_esi(None, [], transcript=transcript)
+            await bus.publish(
+                room,
+                {
+                    "type": "esi_update",
+                    "data": {
+                        "standard_esi": esi_default["standard"],
+                        "victor_esi": esi_default["adjusted"],
+                        "adjustment_reason": esi_default["reason"],
+                        "agent": self.name,
+                    },
+                },
+            )
+            await self._scribe_step(room, transcript, biomarkers, [], esi_default, patient_ctx)
             return
 
         # 1. Glossify each flag in parallel.
