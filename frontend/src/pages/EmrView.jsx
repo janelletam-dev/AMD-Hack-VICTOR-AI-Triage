@@ -27,6 +27,7 @@ import {
   setIdentity as logIdentity,
   setEmergency as logEmergency,
   setTriageComplete as logTriageComplete,
+  useSessionLog,
 } from "../state/sessionLogStore.js";
 
 import { HTTP_BASE, WS_BASE } from "../lib/backend-urls.js";
@@ -87,11 +88,17 @@ export default function EmrView() {
   );
   useEffect(() => { localStorage.setItem("vic-emr-theme", theme); }, [theme]);
   const isDark = theme === "dark";
-  const [transcriptLines, setTranscriptLines] = useState([]);
-  const [biomarkers, setBiomarkers] = useState(null);
-  const [flag, setFlag] = useState(null);
-  const [soap, setSoap] = useState(null);
-  const [esi, setEsi] = useState(null);
+  // Hydrate initial state from sessionLogStore so that arriving here via the
+  // dashboard's "Approve & Push to Epic" navigation (which fires AFTER the
+  // triage WebSocket has already streamed all events to /clinician) shows
+  // the actual session — not an empty chart waiting for events that won't
+  // come. Live WS events still override on top of the hydrated values.
+  const sessionLog = useSessionLog();
+  const [transcriptLines, setTranscriptLines] = useState(() => sessionLog.transcript_lines || []);
+  const [biomarkers, setBiomarkers] = useState(() => sessionLog.biomarker_summary || null);
+  const [flag, setFlag] = useState(() => (sessionLog.flags && sessionLog.flags[0]) || null);
+  const [soap, setSoap] = useState(() => (sessionLog.soap && Object.keys(sessionLog.soap).length ? sessionLog.soap : null));
+  const [esi, setEsi] = useState(() => (sessionLog.esi && Object.keys(sessionLog.esi).length ? sessionLog.esi : null));
   const identity = useIdentity();
   const [running, setRunning] = useState(false);
   const timersRef = useRef([]);

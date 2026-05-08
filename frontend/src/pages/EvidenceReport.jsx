@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { marked } from "marked";
 import TopNav from "../components/vic/TopNav.jsx";
 import { useSessionLog } from "../state/sessionLogStore.js";
+import { useIdentity } from "../state/identityStore.js";
 import { HTTP_BASE } from "../lib/backend-urls.js";
 
 // Parse the backend's markdown synchronously. The HTML comes from our own
@@ -13,11 +14,39 @@ marked.setOptions({ async: false, gfm: true, breaks: true });
 export default function EvidenceReport() {
   const navigate = useNavigate();
   const sessionLog = useSessionLog();
+  const identity = useIdentity();
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [approved, setApproved] = useState(false);
   const [references, setReferences] = useState(null);
+  const [pushing, setPushing] = useState(false);
+  const [pushError, setPushError] = useState(null);
+
+  // Real Epic push — same endpoint and shape as the dashboard's Approve
+  // button. The chart that lands in /api/epic/push is built from the
+  // backend's authoritative session log (SOAP + biomarkers + flags + ESI),
+  // not from this report's markdown — the report is the *clinician
+  // review artifact*; the FHIR DocumentReference is the *chart*.
+  const onApproveAndPush = async () => {
+    setPushing(true);
+    setPushError(null);
+    try {
+      const r = await fetch(`${HTTP_BASE}/api/epic/push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_id: "demo", identity }),
+      });
+      if (!r.ok) throw new Error(`server returned ${r.status}`);
+      const data = await r.json();
+      setApproved(true);
+      navigate("/clinician/epic", { state: { pushReceipt: data, room: "demo" } });
+    } catch (e) {
+      setPushError(e?.message || "Push failed");
+    } finally {
+      setPushing(false);
+    }
+  };
 
   // Reuse the same theme key as EmrView so the toggle there carries over.
   const [theme, setTheme] = useState(
@@ -118,7 +147,9 @@ export default function EvidenceReport() {
         <ActionFooter
           approved={approved}
           ready={!!report && !loading}
-          onApprove={() => setApproved(true)}
+          pushing={pushing}
+          pushError={pushError}
+          onApprove={onApproveAndPush}
           t={t}
           isDark={isDark}
         />
@@ -500,8 +531,8 @@ function Citation({ ref_, t }) {
 
 // ────────────────────────────────────────────────────────────── action bar
 
-function ActionFooter({ approved, ready, onApprove, t, isDark }) {
-  const enabled = ready && !approved;
+function ActionFooter({ approved, ready, pushing, pushError, onApprove, t, isDark }) {
+  const enabled = ready && !approved && !pushing;
   return (
     <div style={{
       display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
@@ -524,7 +555,11 @@ function ActionFooter({ approved, ready, onApprove, t, isDark }) {
           boxShadow: enabled ? t.primaryBtnGlow : "none",
         }}
       >
-        {approved ? "✓ Approved & pushed (mock)" : "☁ Approve & Push to Chart"}
+        {approved
+          ? "✓ Approved & pushed to Epic"
+          : pushing
+            ? "Pushing to Epic…"
+            : "☁ Approve & Push to Epic"}
       </button>
       <button
         onClick={() => window.print()}
@@ -546,7 +581,15 @@ function ActionFooter({ approved, ready, onApprove, t, isDark }) {
           color: t.approvedColor, fontSize: 13, marginLeft: 4,
           fontFamily: "'JetBrains Mono', monospace",
         }}>
-          Approval recorded locally. The live EHR push happens via the dashboard's "Approve & Push to Epic" — see Production Roadmap.
+          FHIR bundle posted · redirecting to Epic chart…
+        </span>
+      )}
+      {pushError && (
+        <span style={{
+          color: t.errorText, fontSize: 13, marginLeft: 4,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          Push failed: {pushError}
         </span>
       )}
     </div>

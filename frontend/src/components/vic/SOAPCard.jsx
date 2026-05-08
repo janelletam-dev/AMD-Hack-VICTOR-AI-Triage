@@ -1,10 +1,4 @@
-export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum }) {
-  // The clinician addendum can come either as a prop (fresh from
-  // /api/clinician/addendum POST) or be embedded in the SOAP text via
-  // SCRIBE's "(Clinician: ...)" attribution markers. Render a subtle
-  // "Co-authored" banner when either signal is present so the chart
-  // reader can see at a glance that V.I.C.T.O.R. + the clinician both
-  // contributed to this chart, without having to scan attribution lines.
+export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum, esi, flags }) {
   const subjectiveText = soap?.subjective || "";
   const objectiveText = soap?.objective || "";
   const assessmentText = soap?.assessment || "";
@@ -24,58 +18,104 @@ export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum
   );
   const coAuthored = hasClinicianMarker || hasAddendum;
   const clinicianName = (clinicianAddendum?.clinician || "").trim();
+
+  const std = esi?.standard_esi || 0;
+  const adj = esi?.victor_esi || 0;
+  const adjusted = adj && std && adj < std;
+  const flagCount = Array.isArray(flags) ? flags.length : 0;
+  const showScoreSummary = !!(std || adj || flagCount);
+
   return (
-    <section style={{
-      background: "var(--vic-bg-low)",
+    <section className="vic-glass" style={{
+      padding: 22,
       borderRadius: 16,
-      border: `1px solid ${coAuthored ? "rgba(120, 200, 160, 0.25)" : "rgba(69, 70, 77, 0.15)"}`,
-      overflow: "hidden",
+      border: `1px solid ${coAuthored ? "rgba(120, 200, 160, 0.25)" : "rgba(47, 217, 244, 0.15)"}`,
     }}>
-      <div style={{
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        padding: "18px 28px", background: "var(--vic-bg-mid)",
-        borderBottom: "1px solid rgba(69, 70, 77, 0.18)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ color: "var(--vic-primary)", fontSize: 18 }}>📋</span>
-          <h3 style={{
-            margin: 0, fontFamily: "'Space Grotesk', sans-serif",
-            fontWeight: 700, fontSize: 16, letterSpacing: "-0.01em",
-            color: "var(--vic-on-surface)",
-          }}>
-            S.C.R.I.B.E. Automated SOAP Note
-          </h3>
-          {coAuthored && (
-            <span style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "3px 10px", borderRadius: 999,
-              background: "rgba(120, 200, 160, 0.12)",
-              border: "1px solid rgba(120, 200, 160, 0.35)",
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
-              color: "var(--vic-aligned)", fontWeight: 700,
-            }}>
-              Co-authored · V.I.C.T.O.R. + {clinicianName || "Clinician"}
-            </span>
-          )}
-        </div>
-        <span style={{
-          fontSize: 10, fontWeight: 700, color: "var(--vic-on-surface-variant)",
-          textTransform: "uppercase", letterSpacing: "0.18em",
+      <div style={{ marginBottom: 18 }}>
+        <div style={{
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+          textTransform: "uppercase", letterSpacing: "0.2em",
+          color: "rgba(47, 217, 244, 0.8)", marginBottom: 8,
         }}>
-          {soap?.ready ? "Ready for Review" : "Streaming…"}
-        </span>
+          Triage SOAP Note · S.C.R.I.B.E.
+        </div>
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12, flexWrap: "wrap",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <h3 style={{
+              fontSize: 22, fontWeight: 600, margin: 0,
+              fontFamily: "'Space Grotesk', sans-serif",
+              letterSpacing: "-0.02em",
+              color: "var(--vic-on-surface)",
+            }}>
+              Automated SOAP Note
+            </h3>
+            {coAuthored && (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "3px 10px", borderRadius: 999,
+                background: "rgba(120, 200, 160, 0.12)",
+                border: "1px solid rgba(120, 200, 160, 0.35)",
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
+                color: "var(--vic-aligned)", fontWeight: 700,
+              }}>
+                Co-authored · V.I.C.T.O.R. + {clinicianName || "Clinician"}
+              </span>
+            )}
+          </div>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 10, fontWeight: 700,
+            color: "var(--vic-on-surface-variant)",
+            textTransform: "uppercase", letterSpacing: "0.18em",
+          }}>
+            {soap?.ready ? "Ready for Review" : "Streaming…"}
+          </span>
+        </div>
       </div>
+
+      {showScoreSummary && (
+        <div style={{
+          padding: "18px 20px",
+          marginBottom: 16,
+          borderRadius: 12,
+          border: "1px solid rgba(47, 217, 244, 0.18)",
+          background: "rgba(47, 217, 244, 0.04)",
+        }}>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr 1fr",
+            alignItems: "center", gap: 20,
+          }}>
+            <ScoreBlock label="Standard ESI" value={std || "—"} />
+            <Arrow adjusted={adjusted} />
+            <ScoreBlock
+              label="V.I.C.T.O.R.-adjusted ESI"
+              value={adj || "—"}
+              highlight={adjusted}
+            />
+            <ScoreBlock
+              label="Concordance flags"
+              value={flagCount}
+              highlight={flagCount > 0}
+            />
+          </div>
+        </div>
+      )}
 
       {demographics && (demographics.demo || demographics.symptom || demographics.risk) && (
         <div style={{
-          padding: "12px 28px", display: "flex", gap: 24, flexWrap: "wrap",
-          background: "var(--vic-bg)", borderBottom: "1px solid rgba(69, 70, 77, 0.12)",
+          padding: "12px 16px",
+          marginBottom: 16,
+          borderRadius: 10,
+          border: "1px solid rgba(69, 70, 77, 0.18)",
+          background: "rgba(46, 52, 71, 0.25)",
+          display: "flex", gap: 24, flexWrap: "wrap",
           fontSize: 12, color: "var(--vic-on-surface-variant)",
         }}>
-          {/* Each Demo only renders when its value is truthy — avoids
-              showing fabricated "—" placeholders that could read as
-              "we have this info" when in fact we don't yet. */}
           {demographics.demo && (
             <Demo label="Demographics" value={demographics.demo} accent="var(--vic-primary)" />
           )}
@@ -89,7 +129,7 @@ export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum
       )}
 
       <div style={{
-        padding: 28, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28,
+        display: "grid", gridTemplateColumns: "1fr 1fr", gap: 22,
       }}>
         <Section label="Subjective" border="rgba(47, 217, 244, 0.3)">
           <SubjectiveText text={soap?.subjective} />
@@ -99,10 +139,7 @@ export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum
           <p style={panelText}>{soap?.assessment || empty}</p>
         </Section>
 
-        <Section label="Objective">
-          {/* Render SCRIBE's composed objective (biomarker readings + */}
-          {/* contextual notes) when present. Vital-sign tiles only show */}
-          {/* when the caller passes real `vitals` — never fabricate. */}
+        <Section label="Objective" border="rgba(47, 217, 244, 0.3)">
           {vitals && vitals.length > 0 ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {vitals.map((v) => (
@@ -116,12 +153,13 @@ export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum
           )}
         </Section>
 
-        <Section label="Plan">
+        <Section label="Plan" border="rgba(47, 217, 244, 0.3)">
           <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
             {(soap?.plan || DEFAULT_PLAN).map((p, i) => (
               <li key={i} style={{
                 display: "flex", alignItems: "flex-start", gap: 10,
-                fontSize: 13, color: "var(--vic-on-surface)",
+                fontSize: 13, lineHeight: 1.55,
+                color: "var(--vic-on-surface)",
               }}>
                 <span style={{
                   color: "var(--vic-primary)", fontWeight: 700,
@@ -135,17 +173,9 @@ export default function SOAPCard({ soap, vitals, demographics, clinicianAddendum
         </Section>
       </div>
 
-      {/* AI-assisted documentation disclosure — required clinician
-          oversight + bias-monitoring footer. Aligns with AMA augmented-
-          intelligence principles: AI-generated content requires clinician
-          review before signing; output may contain hallucinations,
-          mishearing, or context errors. Linked checklist gives the
-          clinician a quick verification pass before "Approve & Push to
-          Epic" makes the chart durable. */}
       <div style={{
-        padding: "10px 28px",
-        borderTop: "1px solid rgba(69, 70, 77, 0.18)",
-        background: "rgba(46, 52, 71, 0.25)",
+        marginTop: 18, paddingTop: 14,
+        borderTop: "1px solid rgba(69, 70, 77, 0.3)",
         fontSize: 11, lineHeight: 1.55,
         color: "var(--vic-on-surface-variant)",
         display: "flex", justifyContent: "space-between",
@@ -176,8 +206,6 @@ function SubjectiveText({ text }) {
   if (!text) return <p style={panelText}>{empty}</p>;
   const capped = text.length > MAX_SUBJECTIVE_CHARS;
   const display = capped ? text.slice(0, MAX_SUBJECTIVE_CHARS) + "…" : text;
-  // pre-wrap preserves the `\n• …` bullets that SCRIBE composes in the
-  // backfill path; otherwise the HPI collapses into a single run-on line.
   return (
     <div>
       <p style={{ ...panelText, maxHeight: 180, overflowY: "auto", whiteSpace: "pre-wrap" }}>
@@ -197,13 +225,6 @@ function SubjectiveText({ text }) {
 
 const empty = "Awaiting input from the patient interview…";
 
-const DEFAULT_VITALS = [
-  { label: "BP",         value: "142/88",  flag: "High" },
-  { label: "Heart Rate", value: "94 BPM" },
-  { label: "O2 Sat",     value: "98%" },
-  { label: "Temp",       value: "98.6°F" },
-];
-
 const DEFAULT_PLAN = [
   "Immediate 12-lead EKG",
   "Stat Troponin level and CBC",
@@ -221,21 +242,49 @@ function Section({ label, children, border, bg }) {
   return (
     <div>
       <h4 style={{
-        margin: "0 0 12px",
-        color: "var(--vic-primary)", fontSize: 11, fontWeight: 700,
-        textTransform: "uppercase", letterSpacing: "0.2em",
-        display: "flex", alignItems: "center", gap: 8,
+        margin: "0 0 10px",
+        color: "var(--vic-primary)",
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 11, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: "0.18em",
       }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--vic-primary)" }} />
         {label}
       </h4>
       <div style={{
-        ...(border ? { borderLeft: `2px solid ${border}` } : {}),
+        ...(border ? { borderLeft: `2px solid ${border}`, paddingLeft: 12 } : {}),
         ...(bg ? { background: bg, padding: 14, borderRadius: 8 } : {}),
       }}>
         {children}
       </div>
     </div>
+  );
+}
+
+function ScoreBlock({ label, value, highlight }) {
+  return (
+    <div>
+      <div style={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+        letterSpacing: "0.18em", textTransform: "uppercase",
+        color: "var(--vic-on-surface-variant)", marginBottom: 6,
+      }}>{label}</div>
+      <div style={{
+        fontSize: 32, fontWeight: 600,
+        fontFamily: "'Space Grotesk', sans-serif",
+        letterSpacing: "-0.02em",
+        color: highlight ? "var(--vic-error)" : "var(--vic-on-surface)",
+      }}>{value}</div>
+    </div>
+  );
+}
+
+function Arrow({ adjusted }) {
+  return (
+    <div style={{
+      color: adjusted ? "var(--vic-error)" : "var(--vic-on-surface-variant)",
+      fontSize: 24, fontWeight: 700,
+      textAlign: "center",
+    }}>→</div>
   );
 }
 

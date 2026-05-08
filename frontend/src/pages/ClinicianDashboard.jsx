@@ -518,7 +518,7 @@ export default function ClinicianDashboard() {
               onUpdate={(newSoap) => setSoap({ ...newSoap, ready: true })}
             />
 
-            <SOAPCard soap={soap} demographics={buildDemographics(identity, flagQueue)} clinicianAddendum={clinicianAddendum} />
+            <SOAPCard soap={soap} demographics={buildDemographics(identity, flagQueue)} clinicianAddendum={clinicianAddendum} esi={esi} flags={flagQueue} />
 
             <ScientificBasisCard />
 
