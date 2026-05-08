@@ -138,7 +138,7 @@ export default function SOAPCard({
           <SubjectiveText text={soap?.subjective} />
         </Section>
 
-        <Section label="Assessment" border="var(--vic-error)">
+        <Section label="Assessment" border="rgba(47, 217, 244, 0.3)">
           <p style={panelText}>{soap?.assessment || empty}</p>
         </Section>
 
