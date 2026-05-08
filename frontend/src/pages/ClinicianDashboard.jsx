@@ -25,6 +25,7 @@ import {
   setEmergency as logEmergency,
   setTriageComplete as logTriageComplete,
   clearSessionLog,
+  useSessionLog,
 } from "../state/sessionLogStore.js";
 import { HTTP_BASE, WS_BASE } from "../lib/backend-urls.js";
 
@@ -128,6 +129,10 @@ export default function ClinicianDashboard() {
   // knows what language the patient was speaking — drives interpreter
   // request decisions even when the chart is rendered in English.
   const [patientLanguage, setPatientLanguage] = useState("");
+  // Session start timestamp (epoch ms). Set on the first WS event we
+  // see. Used by ConcordanceGapCard to render timestamps like "0:22"
+  // relative to session start (TrueVoice-style).
+  const [sessionStartMs, setSessionStartMs] = useState(null);
   const [biomarkers, setBiomarkers] = useState(null);
   const [biomarkerUnavailable, setBiomarkerUnavailable] = useState(false);
   const [flag, setFlag] = useState(null);
@@ -213,6 +218,13 @@ export default function ClinicianDashboard() {
   }, [agentActivity]);
 
   const processEvent = useCallback((type, data, ts) => {
+    // Session-start anchor for relative timestamps on the
+    // ConcordanceGapCard. Set lazily on the first WS event so timestamps
+    // like "0:22" reflect "elapsed since the kiosk started streaming",
+    // not "since the dashboard mounted".
+    if (ts && sessionStartMs === null) {
+      setSessionStartMs(ts);
+    }
     if (type === "transcript") {
       setTranscript(data.text);
       logTranscript(data);
@@ -531,7 +543,7 @@ export default function ClinicianDashboard() {
                 evidence next to it, and M.E.R.C.E.D.'s clinical gloss
                 below. Concordance score is a 0-100 rollup: 0 = aligned,
                 100 = many high-tier gaps. Hidden when no flags. */}
-            <ConcordanceReport flags={flagQueue} biomarkers={biomarkers} />
+            <ConcordanceReport flags={flagQueue} biomarkers={biomarkers} sessionStartMs={sessionStartMs} />
 
             {/* The standalone "Live Patient Transcript" card used to live
                 here. It's been moved INSIDE IdentityCard's verbatim
@@ -1009,7 +1021,7 @@ function ScientificBasisCard() {
 // by tier). When no flags are present we render an "ALIGNED" banner
 // so the clinician can see "the engine is running and not flagging
 // anything" instead of an empty space they have to interpret.
-function ConcordanceReport({ flags, biomarkers }) {
+function ConcordanceReport({ flags, biomarkers, sessionStartMs }) {
   const list = Array.isArray(flags) ? flags : [];
   // Whether biomarkers have actually arrived. Until the first reading
   // lands, the report has nothing to evaluate — show a thin "monitoring"
@@ -1145,6 +1157,7 @@ function ConcordanceReport({ flags, biomarkers }) {
               key={`${f.triage_label}-${i}`}
               flag={f}
               index={list.length - i}
+              sessionStartMs={sessionStartMs}
             />
           ))}
         </div>
@@ -1273,11 +1286,9 @@ function ConjunctionCheck({ label, examples, met }) {
   );
 }
 
-function ConcordanceGapCard({ flag, index }) {
+function ConcordanceGapCard({ flag, index, sessionStartMs }) {
+  const sessionLog = useSessionLog();
   const utterance = flag.utterance_text || "";
-  // Highlight the matched phrase inside the utterance (case-insensitive).
-  // Falls back to plain text if the phrase isn't present (LLM may have
-  // paraphrased between gloss + the original transcript).
   const matched = flag.trigger_phrase || (Array.isArray(flag.matches) ? flag.matches[0] : "") || "";
   const evidence = Array.isArray(flag.biomarker_evidence) ? flag.biomarker_evidence : [];
   const gloss = flag.gloss || flag.gloss_seed || "";
@@ -1287,114 +1298,256 @@ function ConcordanceGapCard({ flag, index }) {
     : tier === 2
     ? "var(--vic-warning)"
     : "rgba(47, 217, 244, 0.8)";
+  const borderColor = fg === "var(--vic-error)"
+    ? "rgba(255, 100, 100, 0.25)"
+    : fg === "var(--vic-warning)"
+    ? "rgba(255, 180, 111, 0.25)"
+    : "rgba(47, 217, 244, 0.18)";
+  // Format flag.ts_ms as "M:SS since session start" (TrueVoice-style).
+  // Falls back to wall-clock HH:MM if sessionStartMs hasn't been set yet.
+  const elapsed = formatElapsedTimestamp(flag.ts_ms, sessionStartMs);
+  // Expandable full-context: show the patient's chief complaint + recent
+  // patient turns under a "view full context" disclosure. Default
+  // collapsed — the windowed quote is usually enough.
+  const [expanded, setExpanded] = useState(false);
+  const fullContext = useMemo(() => {
+    const cc = (sessionLog?.identity?.complaint || "").trim();
+    const turns = (sessionLog?.transcript_lines || [])
+      .filter(t => t.is_final !== false)
+      .slice(-12)
+      .map(t => t.text)
+      .filter(Boolean)
+      .join("\n");
+    return [cc && `Chief complaint:\n${cc}`, turns && `Recent turns:\n${turns}`]
+      .filter(Boolean)
+      .join("\n\n");
+  }, [sessionLog]);
+
   return (
     <div style={{
-      padding: "12px 14px", borderRadius: 12,
-      border: `1px solid ${fg === "var(--vic-error)" ? "rgba(255, 100, 100, 0.25)" : fg === "var(--vic-warning)" ? "rgba(255, 180, 111, 0.25)" : "rgba(47, 217, 244, 0.18)"}`,
+      padding: "14px 16px", borderRadius: 12,
+      border: `1px solid ${borderColor}`,
       borderLeftWidth: 4, borderLeftColor: fg,
       background: "rgba(12, 19, 36, 0.4)",
-      display: "flex", flexDirection: "column", gap: 10,
+      display: "flex", flexDirection: "column", gap: 12,
     }}>
+      {/* Header: gap name + #N on left, timestamp + confidence on right */}
       <div style={{
         display: "flex", justifyContent: "space-between",
-        alignItems: "baseline", gap: 8, flexWrap: "wrap",
+        alignItems: "center", gap: 8, flexWrap: "wrap",
       }}>
-        <span style={{
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 10, fontWeight: 700, color: fg,
-          textTransform: "uppercase", letterSpacing: "0.2em",
-        }}>
-          {tier === 1 ? "Critical gap" : tier === 2 ? "Concordance gap" : "Verbal-acoustic mismatch"} · #{index}
-        </span>
-        <span style={{
-          display: "flex", alignItems: "baseline", gap: 10,
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: "50%",
+            background: fg, flexShrink: 0,
+          }} />
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 10, fontWeight: 700, color: fg,
+            textTransform: "uppercase", letterSpacing: "0.2em",
+          }}>
+            Concordance gap · #{index}
+          </span>
+        </div>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
           fontSize: 10, color: "var(--vic-on-surface-variant)",
           fontFamily: "'JetBrains Mono', monospace",
-          letterSpacing: "0.06em", opacity: 0.85,
+          letterSpacing: "0.06em",
         }}>
-          <span>{flag.triage_label}</span>
+          {elapsed && <span style={{ opacity: 0.7 }}>{elapsed}</span>}
           {typeof flag.confidence === "number" && (
             <span style={{
-              padding: "1px 8px", borderRadius: 999,
+              padding: "2px 8px", borderRadius: 999,
               border: `1px solid ${fg}`,
               color: fg, fontWeight: 700,
               letterSpacing: "0.08em",
             }}>
-              {Math.round(flag.confidence * 100)}% conf
+              {Math.round(flag.confidence * 100)}%
             </span>
           )}
-        </span>
+        </div>
       </div>
 
-      {/* Patient quote — italic with quote mark, matched phrase
-          highlighted in the tier color. Renders even if utterance is
-          short; falls back to just the matched phrase if no fuller
-          context was published. */}
+      {/* Patient quote — italic, decorative quote mark, matched phrase
+          highlighted. This is the WHERE-THE-PATIENT-IS-MINIMISING
+          section the clinician needs to see. */}
       <div style={{
-        position: "relative", paddingLeft: 22,
-        fontSize: 14, fontStyle: "italic", lineHeight: 1.5,
+        position: "relative", paddingLeft: 26,
+        fontSize: 15, fontStyle: "italic", lineHeight: 1.55,
         color: "var(--vic-on-surface)",
       }}>
         <span style={{
-          position: "absolute", left: 0, top: -4,
-          fontSize: 22, color: fg, opacity: 0.5,
+          position: "absolute", left: 0, top: -8,
+          fontSize: 32, color: fg, opacity: 0.5, lineHeight: 1,
           fontFamily: "'Space Grotesk', 'Inter', sans-serif",
         }}>“</span>
         <HighlightedQuote text={utterance || matched} highlight={matched} fg={fg} />
       </div>
 
+      {/* "matched [phrase pill]" — TrueVoice-style inline indicator
+          showing exactly what regex/keyword caught the gap. */}
       {matched && (
         <div style={{
           fontSize: 10, fontFamily: "'JetBrains Mono', monospace",
           color: "var(--vic-on-surface-variant)",
           letterSpacing: "0.08em",
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
         }}>
-          MATCHED <span style={{
-            color: fg, padding: "1px 6px",
-            background: `${fg.startsWith("var") ? "rgba(255, 100, 100, 0.10)" : fg === "var(--vic-warning)" ? "rgba(255, 180, 111, 0.10)" : "rgba(47, 217, 244, 0.10)"}`,
-            borderRadius: 4, fontStyle: "italic",
-          }}>"{matched}"</span>
+          <span style={{ textTransform: "uppercase", opacity: 0.7 }}>matched</span>
+          <span style={{
+            color: fg, padding: "2px 10px",
+            background: fg === "var(--vic-error)"
+              ? "rgba(255, 100, 100, 0.12)"
+              : fg === "var(--vic-warning)"
+              ? "rgba(255, 180, 111, 0.12)"
+              : "rgba(47, 217, 244, 0.12)",
+            borderRadius: 999, fontStyle: "italic",
+            fontSize: 11, fontWeight: 600,
+          }}>{matched}</span>
         </div>
       )}
 
-      {/* Voice at this moment — biomarker evidence chips. Each chip
-          is a {model.name = value} entry showing the breaching axis
-          and its measured value. Bar visualises the value 0-1 so the
-          clinician can scan severity. */}
+      {/* "View full context" expandable — chief complaint + recent
+          turns. Default collapsed. The windowed quote above is usually
+          enough; this is the "show me everything" escape hatch when a
+          clinician wants to see what surrounded the minimisation. */}
+      {fullContext && (
+        <details
+          style={{
+            fontSize: 11, color: "var(--vic-on-surface-variant)",
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+          open={expanded}
+          onToggle={(e) => setExpanded(e.currentTarget.open)}
+        >
+          <summary style={{
+            cursor: "pointer", letterSpacing: "0.06em",
+            color: "var(--vic-primary)", opacity: 0.85,
+            outline: "none",
+          }}>
+            {expanded ? "▾ hide full context" : "▸ view full context (chief complaint + recent turns)"}
+          </summary>
+          <div style={{
+            marginTop: 8, padding: "10px 12px", borderRadius: 8,
+            background: "rgba(46, 52, 71, 0.4)",
+            border: "1px solid rgba(69, 70, 77, 0.3)",
+            color: "var(--vic-on-surface)", fontStyle: "normal",
+            fontFamily: "'Inter', system-ui, sans-serif",
+            fontSize: 12, lineHeight: 1.55, whiteSpace: "pre-wrap",
+          }}>
+            {fullContext}
+          </div>
+        </details>
+      )}
+
+      {/* VOICE AT THIS MOMENT — full-row biomarker bars (TrueVoice-style).
+          One row per breaching axis: name, value, full-width bar with
+          threshold marker. Replaces the chip-pill layout for clarity. */}
       {evidence.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{
             fontSize: 9, fontFamily: "'JetBrains Mono', monospace",
             color: "var(--vic-on-surface-variant)",
-            letterSpacing: "0.16em", textTransform: "uppercase", opacity: 0.7,
+            letterSpacing: "0.18em", textTransform: "uppercase", opacity: 0.7,
           }}>Voice at this moment</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {evidence.map((e, i) => (
-              <BiomarkerEvidenceChip key={i} evidence={e} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {evidence.slice(0, 5).map((e, i) => (
+              <BiomarkerEvidenceRow key={i} evidence={e} />
             ))}
           </div>
         </div>
       )}
 
-      {/* M.E.R.C.E.D.'s clinical gloss — the LLM's read on what
-          this gap means clinically. Mirrors TrueVoice's "Clinical
-          note · Claude Haiku" line. */}
+      {/* CLINICAL NOTE · M.E.R.C.E.D. (victor-triage LoRA).
+          Honest model attribution — this prose is generated by V.I.C.T.O.R.'s
+          fine-tuned LoRA running on the AMD MI300X, mirrored on
+          TrueVoice's "Claude Haiku" attribution. */}
       {gloss && (
         <div style={{
-          fontSize: 12, lineHeight: 1.5,
-          color: "var(--vic-on-surface)",
-          padding: "8px 10px", borderRadius: 8,
+          padding: "10px 12px", borderRadius: 8,
           background: "rgba(47, 217, 244, 0.04)",
           borderLeft: "2px solid rgba(47, 217, 244, 0.4)",
         }}>
-          <span style={{
+          <div style={{
             fontSize: 9, fontFamily: "'JetBrains Mono', monospace",
-            color: "rgba(47, 217, 244, 0.65)", letterSpacing: "0.16em",
-            textTransform: "uppercase", marginRight: 8,
-          }}>Clinical note · M.E.R.C.E.D.</span>
-          {gloss}
+            color: "rgba(47, 217, 244, 0.7)", letterSpacing: "0.18em",
+            textTransform: "uppercase", marginBottom: 6,
+          }}>
+            Clinical note · M.E.R.C.E.D. <span style={{
+              color: "var(--vic-on-surface-variant)", opacity: 0.7,
+              marginLeft: 6,
+            }}>victor-triage LoRA · MI300X</span>
+          </div>
+          <div style={{
+            fontSize: 12.5, lineHeight: 1.55,
+            color: "var(--vic-on-surface)",
+          }}>
+            {gloss}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Format an epoch-ms timestamp as "M:SS" elapsed since sessionStartMs.
+// Returns "" when either timestamp is missing — header just hides the
+// pill rather than showing a broken value.
+function formatElapsedTimestamp(tsMs, sessionStartMs) {
+  if (typeof tsMs !== "number" || typeof sessionStartMs !== "number") return "";
+  const elapsedSec = Math.max(0, Math.floor((tsMs - sessionStartMs) / 1000));
+  const m = Math.floor(elapsedSec / 60);
+  const s = elapsedSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Biomarker evidence as a TrueVoice-style row: axis name on the left,
+// numeric value, full-width bar with a threshold-line marker.
+function BiomarkerEvidenceRow({ evidence }) {
+  const v = typeof evidence.value === "number" ? evidence.value : 0;
+  const pct = Math.max(0, Math.min(100, Math.round(v * 100)));
+  // Threshold for "breaching" depends on the axis. helios.exhaustion
+  // threshold is 0.33 (lower than other axes since fatigue is a key
+  // atypical-CVD signal); other helios axes are 0.66 default. Mirror
+  // engine/concordance.py:THRESHOLDS / RISK_AWARE_THRESHOLDS.
+  const threshold = (evidence.model === "helios" && evidence.name === "exhaustion") ? 33 : 66;
+  const breaching = pct >= threshold;
+  const barColor = breaching ? "var(--vic-error)" : "var(--vic-warning)";
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "minmax(120px, 1fr) auto minmax(140px, 2fr)",
+      alignItems: "center", gap: 10,
+      fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+    }}>
+      <span style={{
+        color: "var(--vic-on-surface-variant)",
+        letterSpacing: "0.04em",
+      }}>
+        {evidence.name || evidence.model}
+      </span>
+      <span style={{
+        color: barColor, fontWeight: 700, minWidth: 36, textAlign: "right",
+      }}>
+        {v.toFixed(2)}
+      </span>
+      <div style={{
+        position: "relative", height: 6, borderRadius: 3,
+        background: "rgba(255, 255, 255, 0.06)",
+        overflow: "hidden",
+      }}>
+        <span style={{
+          position: "absolute", top: 0, left: 0, height: "100%",
+          width: `${pct}%`, background: barColor,
+          transition: "width 0.3s ease",
+        }} />
+        <span style={{
+          position: "absolute", top: -2, bottom: -2,
+          left: `${threshold}%`, width: 1,
+          background: "rgba(255, 255, 255, 0.35)",
+        }} />
+      </div>
     </div>
   );
 }
