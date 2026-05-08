@@ -24,6 +24,13 @@ class Settings:
     # model name in VLLM_MODEL.
     vllm_base_url: str = os.getenv("VLLM_BASE_URL", "http://localhost:11434/v1")
     vllm_model: str = os.getenv("VLLM_MODEL", "llama3.1:8b")
+    # JACKIE intentionally calls the BASE model (no LoRA) — see jackie_agent.py
+    # for the clinical-register rationale. On Ollama dev this is the same as
+    # vllm_model. On vLLM prod, the served model name is overridden by the
+    # LoRA name when --enable-lora --lora-modules are set, so JACKIE must use
+    # the LoRA name too unless the droplet exposes the base under a separate
+    # served-model-name. Default falls through to vllm_model for safety.
+    vllm_base_model: str = os.getenv("VLLM_BASE_MODEL", "") or os.getenv("VLLM_MODEL", "llama3.1:8b")
     # Most OpenAI-compatible servers (Ollama, vLLM) require *some* api_key
     # string, but the value is unused locally. Keep configurable for hosted
     # vLLM deployments that do enforce a key.

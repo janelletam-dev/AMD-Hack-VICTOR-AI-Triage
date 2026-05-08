@@ -15,6 +15,7 @@ import logging
 import re
 from pathlib import Path
 
+from config import settings
 from services.vllm_service import ChatMessage, LLMUnavailable, VLLMService
 
 log = logging.getLogger("victor.agent.jackie")
@@ -180,15 +181,14 @@ class JackieAgent:
                 messages,
                 temperature=0.4,
                 max_tokens=120,
-                # JACKIE specifically uses the BASE model, not the LoRA fine-tune.
-                # The fine-tune was trained on data with therapy-coded language
-                # and consistently leaks phrasings like "I know you're trying to
-                # help, but..." or "What's been on your mind" despite the system
-                # prompt forbidding them. Base llama3.1:8b follows the prompt's
-                # ED-triage register more cleanly. The LoRA stays active for
-                # M.E.R.C.E.D. and the other agents where clinical register is
-                # appropriate.
-                model="llama3.1:8b",
+                # JACKIE prefers the BASE model (no LoRA) when one is exposed
+                # — the fine-tune leaks therapy-coded phrasings ("I know you're
+                # trying to help, but…", "What's been on your mind") despite
+                # the system prompt forbidding them. Base llama follows the
+                # ED-triage register more cleanly. Configurable via
+                # VLLM_BASE_MODEL — falls through to VLLM_MODEL when the
+                # droplet only exposes the LoRA name (default vLLM setup).
+                model=settings.vllm_base_model,
             )
             text = text.strip().strip('"').strip()
             # Strip metacommentary the LLM sometimes wraps around its
