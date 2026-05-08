@@ -515,7 +515,25 @@ class ConcordanceEngine:
             if risk_factors else ""
         )
 
+        # Tier-2 suppression — Tier 2 minimisation captures CCs like
+        # "high blood pressure" that under-triage in CVD cohorts. When the
+        # patient has *already* verbalised a high-acuity CC (chest pain,
+        # SOB, cardiac concern) and the safety-keyword auto-escalation
+        # has fired, that BP mention is comorbidity disclosure, not
+        # under-triage risk — the patient is presenting AS the high-acuity
+        # case. Firing Tier 2 here adds a misleading "Hypertension" flag
+        # on top of an already-escalated chart.
+        safety = detect_safety_escalation(transcript)
+        suppress_tier_2 = safety is not None
+        if suppress_tier_2:
+            log.info(
+                "concordance: suppressing tier-2 flags (safety keyword '%s' fired)",
+                safety.label,
+            )
+
         for entry, matches in self.find_minimisation(transcript):
+            if suppress_tier_2 and entry.tier == 2:
+                continue
             seed = (
                 f"Patient presents with {entry.triage_label.lower()} "
                 f"(MIMIC-IV mean acuity {entry.acuity:.2f} in CVD patients). "
