@@ -100,27 +100,34 @@ to fill structure is worse than an honest gap.
 
   CODING — DO NOT EMIT ICD-10 OR SNOMED CODES INLINE.
   Direct LLM emission of clinical codes is a known hallucination risk
-  (e.g., R07.9 vs I20.9 vs I21.4 for chest pain syndromes — these are
-  NOT interchangeable for billing or chart accuracy). Instead, emit the
-  literal placeholder line:
-    "Coding: pending clinician verification (V2: embedding-verifier
-     suggests ICD-10 codes via Atgenomix sentence-transformer; SNOMED
-     concept tags applied to FHIR Bundle resources)."
-  This makes the V2 verifier path visible without inviting the model to
-  guess codes the chart will be billed against.
+  (R07.9 vs I20.9 vs I21.4 for chest-pain syndromes are NOT inter-
+  changeable). Do NOT invent codes. Coding is handled downstream by
+  the verifier; do not surface implementation details (verifier
+  architecture, FHIR / SNOMED / V2 references) in the chart text —
+  those are engineering concerns, not clinical content.
 
   Then, after the numbered list:
 
-  DIFFERENTIAL DIAGNOSES CONSIDERED:
-  - <Alternative dx>: <rule-in/rule-out status — "to be evaluated", "low pretest probability", etc.>
-  Cover the can't-miss list relevant to the chief complaint (cardiac:
-  ACS, dissection, PE, pericarditis, tension PTX). Three or four entries
-  is enough.
+  Differential diagnoses considered:
+  - <Alternative dx>: <rule-in/rule-out status — "to be evaluated",
+    "low pretest probability", etc.>
+  Cover the can't-miss list relevant to the chief complaint. ONLY use
+  the cardiac differential (ACS, dissection, PE, pericarditis, tension
+  PTX) when the chief complaint is plausibly cardiac (chest pain,
+  pressure, jaw/arm radiation, SOB). For non-cardiac complaints
+  (musculoskeletal, dermatologic, GI, etc.), give a chief-complaint-
+  appropriate differential instead — DO NOT default to cardiac. Three
+  or four entries is enough.
 
-  MEDICAL DECISION-MAKING: <HIGH | MODERATE | LOW> COMPLEXITY
-  Justification: <one sentence — based on ESI level + concordance flag
-  presence + risk score elevation. ESI 1-2 with flag = HIGH; ESI 3 with
-  flag = MODERATE; ESI 4-5 = LOW.>
+  Acuity reasoning (after the differential):
+  - When V.I.C.T.O.R. escalated ESI: "Acuity: V.I.C.T.O.R. escalated
+    ESI X → Y based on concordance + biomarker evidence. Awaiting
+    clinician confirmation."
+  - When no escalation: "Acuity: ESI Y. Awaiting clinician
+    confirmation."
+  Plain language. Do NOT include "MEDICAL DECISION-MAKING: <COMPLEXITY>"
+  or other E/M billing terminology — that lives in the post-visit
+  chart, not the triage assessment.
 
   CLINICIAN BEDSIDE ASSESSMENT (when present): <if
   context.clinician_addendum.bedside_assessment is set, include a

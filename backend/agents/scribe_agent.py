@@ -408,64 +408,70 @@ class ScribeAgent:
         # ── A(ssessment) — numbered differential + MDM complexity ─────────
         if not self.note.assessment.strip():
             assess_lines: list[str] = []
-            anchor = cc_short or (cc_text[:80] if cc_text else "")
+            # Use the SCRIBE-distilled smart summary first; fall back to
+            # the verbatim only if the smart summary hasn't landed yet.
+            # Truncating raw verbatim mid-word ("I p") looks broken.
+            anchor = cc_short or (cc_text[:120] if cc_text else "")
+            cc_lower = (cc_short or cc_text or "").lower()
+            is_cardiac_cc = any(
+                kw in cc_lower
+                for kw in ("chest", "heart", "cardiac", "pressure", "arm pain", "jaw")
+            )
+
             if flags:
                 top = sorted(flags, key=lambda f: f.get("tier", 99))[0]
                 label = top.get("triage_label") or "Atypical presentation"
                 tier = top.get("tier", 3)
-                assess_lines.append(f"1. {label or 'Working differential'}")
-                assess_lines.append(f"   - Clinical presentation: {anchor or 'see HPI'}")
+                assess_lines.append(f"1. {label}")
+                assess_lines.append(f"   - Presentation: {anchor or 'see HPI'}")
                 assess_lines.append(
-                    f"   - V.I.C.T.O.R. concordance: Tier {tier} flag — "
-                    f"verbal-acoustic mismatch suggests under-triage risk"
+                    f"   - V.I.C.T.O.R. concordance: Tier {tier} verbal-acoustic "
+                    f"mismatch — under-triage risk"
                 )
-                assess_lines.append("")
-                assess_lines.append("DIFFERENTIAL DIAGNOSES CONSIDERED:")
-                assess_lines.append("- ACS (typical or atypical): to be evaluated")
-                assess_lines.append("- Aortic dissection: low pretest probability")
-                assess_lines.append("- PE: pending DVT/risk-factor screen")
-                assess_lines.append("- Pericarditis: pending ECG + exam")
+                # Differential only when the chief complaint is plausibly
+                # cardiac. Stamping ACS / aortic dissection / PE on an
+                # ankle-pain note (when a flag happens to fire for some
+                # reason) is clinically wrong AND visually broken.
+                if is_cardiac_cc:
+                    assess_lines.append("")
+                    assess_lines.append("Considered:")
+                    assess_lines.append("- ACS (typical or atypical): pending workup")
+                    assess_lines.append("- Aortic dissection: low pretest probability")
+                    assess_lines.append("- PE: pending DVT / risk-factor screen")
+                    assess_lines.append("- Pericarditis: pending ECG + exam")
+                else:
+                    assess_lines.append("   - Differential to be developed at bedside")
             elif anchor:
-                assess_lines.append(f"1. Working differential anchored on: {anchor}")
+                assess_lines.append(f"1. Working impression: {anchor}")
                 assess_lines.append("   - Clinical evaluation pending bedside assessment")
             else:
                 assess_lines.append("1. Differential pending clinician evaluation")
 
-            mdm = "MODERATE"
+            # Acuity reasoning — concise, clinical. Replaces the prior
+            # "MEDICAL DECISION-MAKING: ... COMPLEXITY" billing-coding
+            # framing (E/M coding belongs in the post-visit chart, not
+            # the triage assessment a clinician reads at bedside).
             if esi:
-                adj = esi.get("adjusted") or esi.get("standard") or 3
-                if adj <= 2 and flags:
-                    mdm = "HIGH"
-                elif adj >= 4:
-                    mdm = "LOW"
-            assess_lines.append("")
-            assess_lines.append(f"MEDICAL DECISION-MAKING: {mdm} COMPLEXITY")
-            mdm_reason = []
-            if esi.get("adjusted") and esi.get("standard") and esi["adjusted"] < esi["standard"]:
-                mdm_reason.append("ESI escalation")
-            if flags:
-                mdm_reason.append("active concordance flag")
-            mdm_reason.append("clinician confirmation required")
-            assess_lines.append("Justification: " + ", ".join(mdm_reason) + ".")
+                adj = esi.get("adjusted")
+                std = esi.get("standard")
+                if adj and std and adj < std:
+                    assess_lines.append("")
+                    assess_lines.append(
+                        f"Acuity: V.I.C.T.O.R. escalated ESI {std} → {adj} "
+                        f"based on concordance + biomarker evidence. Awaiting "
+                        f"clinician confirmation."
+                    )
+                elif adj:
+                    assess_lines.append("")
+                    assess_lines.append(
+                        f"Acuity: ESI {adj}. Awaiting clinician confirmation."
+                    )
 
             if cl_bedside_assess:
                 attribution = f"Dr. {cl_name}" if cl_name else "Bedside clinician"
                 assess_lines.append("")
-                assess_lines.append(f"CLINICIAN BEDSIDE ASSESSMENT ({attribution}):")
+                assess_lines.append(f"Bedside clinician assessment ({attribution}):")
                 assess_lines.append(cl_bedside_assess)
-
-            # Coding placeholder — never emit ICD-10/SNOMED inline. Direct
-            # LLM emission of clinical codes is a known hallucination class
-            # (R07.9 vs I20.9 vs I21.4 for chest-pain syndromes are NOT
-            # interchangeable). V2 verifier (Atgenomix sentence-transformer
-            # embedding lookup against curated CMS ICD-10 table) closes the
-            # loop with verified codes the clinician confirms.
-            assess_lines.append("")
-            assess_lines.append(
-                "Coding: pending clinician verification "
-                "(V2: embedding-verifier suggests ICD-10 codes; "
-                "SNOMED concept tags applied to FHIR Bundle resources)."
-            )
 
             self.note.assessment = "\n".join(assess_lines)
 
