@@ -97,7 +97,7 @@ docker run -d \
   --served-model-name "${SERVED_NAME}" \
   --enable-lora \
   --lora-modules "${SERVED_NAME}=${LORA_REPO}" \
-  --max-model-len 4096 \
+  --max-model-len 8192 \
   --max-lora-rank 32 \
   --host 0.0.0.0 \
   --port 8000
