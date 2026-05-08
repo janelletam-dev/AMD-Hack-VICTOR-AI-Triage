@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from engine.concordance import ConcordanceFlag
+from engine.concordance import ConcordanceFlag, detect_safety_escalation
 from engine.triage_logic import adjust_esi
 from services.event_bus import bus
 from services.vllm_service import ChatMessage, LLMUnavailable, VLLMService
@@ -81,14 +81,23 @@ class VictorAgent:
         self,
         chief_complaint_label: str | None,
         flags: list[ConcordanceFlag],
+        transcript: str = "",
     ) -> dict:
         """Return the ESI decision as a dict suitable for the WS event.
 
         The numerical adjustment is deterministic (engine.triage_logic). The
         LLM only writes the one-sentence `reason` when an adjustment fired,
         so a model failure can't break the score.
+
+        Re-runs detect_safety_escalation() on the transcript and feeds it
+        into adjust_esi so V.I.C.T.O.R.'s output respects the ESI-2 floor
+        for chest pain / SOB / cardiac concern. Without this, the WS-level
+        safety_escalation event would publish ESI 2 once, and then this
+        routine's later esi_update would silently overwrite it (e.g. with
+        ESI 4 when only a Tier-4 verbal-minimisation flag fired).
         """
-        decision = adjust_esi(chief_complaint_label, flags)
+        safety_escalated = detect_safety_escalation(transcript) is not None
+        decision = adjust_esi(chief_complaint_label, flags, safety_escalated=safety_escalated)
         result = {
             "standard": decision.standard,
             "adjusted": decision.adjusted,
@@ -208,7 +217,7 @@ class VictorAgent:
 
         # 2. ESI decision.
         await self._activity(room, self.name, "active", "Adjusting ESI")
-        esi = await self.decide_esi(chief_complaint_label, flags)
+        esi = await self.decide_esi(chief_complaint_label, flags, transcript=transcript)
         await bus.publish(
             room,
             {
