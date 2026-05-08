@@ -35,6 +35,78 @@ class SOAPNote:
 _FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
 
+# Canonical medical-term map for de-duplication on the "Associated symptoms"
+# line. The LoRA frequently emits the same condition under multiple aliases
+# (e.g. "Hypertension, High blood pressure, High blood pressure") because
+# the patient verbalises one form and the model echoes both the spoken and
+# clinical names. Normalise to a canonical form before deduping.
+_TERM_SYNONYMS: dict[str, str] = {
+    "hypertension": "Hypertension",
+    "high blood pressure": "Hypertension",
+    "htn": "Hypertension",
+    "hbp": "Hypertension",
+    "elevated bp": "Hypertension",
+    "diabetes": "Diabetes",
+    "diabetes mellitus": "Diabetes",
+    "dm": "Diabetes",
+    "type 2 diabetes": "Diabetes",
+    "type ii diabetes": "Diabetes",
+    "t2dm": "Diabetes",
+    "myocardial infarction": "Prior MI",
+    "mi": "Prior MI",
+    "heart attack": "Prior MI",
+    "high cholesterol": "Hyperlipidemia",
+    "hyperlipidemia": "Hyperlipidemia",
+    "hld": "Hyperlipidemia",
+    "family history of cad": "Family history of CVD",
+    "family history of cvd": "Family history of CVD",
+    "family hx mi": "Family history of CVD",
+    "smoker": "Smoking",
+    "smoking": "Smoking",
+}
+
+
+def _canonicalise_term(term: str) -> str:
+    key = term.strip().lower().rstrip(".")
+    return _TERM_SYNONYMS.get(key, term.strip())
+
+
+def _dedupe_associated_symptoms(subjective: str) -> str:
+    """Find the 'Associated symptoms:' line and dedupe synonym variants.
+
+    Operates only on a single line — leaves the rest of the subjective
+    untouched. Preserves order of first appearance (deterministic).
+    Returns subjective unchanged if the line is absent.
+    """
+    lines = subjective.splitlines()
+    out: list[str] = []
+    changed = False
+    for line in lines:
+        m = re.match(r"^(\s*Associated symptoms:\s*)(.*)$", line, re.IGNORECASE)
+        if not m:
+            out.append(line)
+            continue
+        prefix, body = m.group(1), m.group(2).strip()
+        if not body or body.lower() in ("n/a", "none", "—", "-"):
+            out.append(line)
+            continue
+        seen: set[str] = set()
+        canon: list[str] = []
+        for raw in re.split(r"\s*,\s*", body):
+            term = _canonicalise_term(raw)
+            key = term.lower()
+            if not term or key in seen:
+                continue
+            seen.add(key)
+            canon.append(term)
+        out.append(f"{prefix}{', '.join(canon) if canon else 'n/a'}")
+        if canon != [t.strip() for t in re.split(r"\s*,\s*", body) if t.strip()]:
+            changed = True
+    if not changed:
+        return subjective
+    return "\n".join(out)
+
+
 def _parse_soap(text: str) -> dict | None:
     """Best-effort parse of the LLM's SOAP JSON output."""
     if not text:
@@ -120,7 +192,9 @@ class ScribeAgent:
             elif not isinstance(plan, list):
                 plan = []
             self.note = SOAPNote(
-                subjective=str(parsed.get("subjective") or self.note.subjective),
+                subjective=_dedupe_associated_symptoms(
+                    str(parsed.get("subjective") or self.note.subjective)
+                ),
                 objective=str(parsed.get("objective") or self.note.objective),
                 assessment=str(parsed.get("assessment") or self.note.assessment),
                 plan=plan or self.note.plan,

@@ -418,31 +418,57 @@ const codeStyle = (isDark) => isDark ? ({
 function ScientificBasis({ references, t }) {
   const items = references?.references || [];
   const futureDatasets = references?.future_training_data?.datasets || [];
+  const [expanded, setExpanded] = useState(false);
   if (!items.length) return null;
   return (
     <Card t={t}>
-      <div style={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-        letterSpacing: "0.2em", textTransform: "uppercase",
-        color: t.accentSoft, marginBottom: 4,
-      }}>
-        Scientific Basis · Peer-Reviewed
-      </div>
-      <p style={{
-        margin: "0 0 14px", fontSize: 12, color: t.textMuted,
-        lineHeight: 1.5,
-      }}>
-        V.I.C.T.O.R.'s voice-biomarker triage is grounded in published
-        clinical literature. These references back the concordance flags
-        and ESI adjustments above.
-      </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {items.map((ref) => (
-          <Citation key={ref.id} ref_={ref} t={t} />
-        ))}
-      </div>
-      {futureDatasets.length > 0 && (
-        <FutureDatasets datasets={futureDatasets} t={t} />
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        style={{
+          width: "100%",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          background: "transparent", border: "none", padding: 0,
+          cursor: "pointer", textAlign: "left",
+          color: t.text, fontFamily: "inherit",
+        }}
+      >
+        <span>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+            letterSpacing: "0.2em", textTransform: "uppercase",
+            color: t.accentSoft, marginBottom: 4,
+          }}>
+            Scientific Basis · Peer-Reviewed
+          </div>
+          <span style={{ fontSize: 13, color: t.textMuted, fontWeight: 500 }}>
+            {items.length} citation{items.length === 1 ? "" : "s"} backing the concordance flags · click to {expanded ? "collapse" : "expand"}
+          </span>
+        </span>
+        <span style={{
+          color: t.accent, fontSize: 14, fontWeight: 700,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{
+            margin: "0 0 14px", fontSize: 12, color: t.textMuted,
+            lineHeight: 1.5,
+          }}>
+            V.I.C.T.O.R.'s voice-biomarker triage is grounded in published
+            clinical literature. These references back the concordance flags
+            and ESI adjustments above.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {items.map((ref) => (
+              <Citation key={ref.id} ref_={ref} t={t} />
+            ))}
+          </div>
+          {futureDatasets.length > 0 && (
+            <FutureDatasets datasets={futureDatasets} t={t} />
+          )}
+        </div>
       )}
     </Card>
   );
