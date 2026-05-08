@@ -115,8 +115,17 @@ TIER_4_PHRASES: tuple[str, ...] = (
     # or "I didn't want to come in" (past). The original pattern was past-tense
     # only and silently missed the canonical demo line in the eval harness.
     r"\bi\s+(?:do(?:n'?t|\s+not)|didn'?t)\s+want\s+to\s+(?:bother|trouble|make\s+a\s+fuss)\b",
-    r"\bsorry\s+to\s+(?:come\s+in|bother|trouble|waste)\b",
+    r"\bsorry\s+(?:to|for)\s+(?:come|coming)\s+in\b",
+    r"\bsorry\s+(?:to|for)\s+(?:bother|troubl|wast)\w*\b",
     r"\bbeen\s+going\s+on\s+for\s+a\s+while\s+but\b",
+    # Additional minimisation idioms observed in scenario 4 verbatim
+    # (Margaret O'Connor 2026-05-08): "Maybe that's nothing", "probably
+    # just coming down with something", "I'm probably fine".
+    r"\bmaybe\s+(?:it'?s|that'?s)\s+nothing\b",
+    r"\bprobably\s+just\s+coming\s+down\b",
+    r"\bi'?m\s+probably\s+fine\b",
+    r"\b(?:it'?s\s+)?nothing\s+serious\b",
+    r"\bdon'?t\s+want\s+to\s+(?:waste|take\s+up).*\byour\s+time\b",
     # Spanish minimisation phrases (US-clinical neutral). Same conjunctive
     # logic — matched against the patient transcript regardless of language;
     # no flag fires unless biomarkers are also elevated.
@@ -564,24 +573,35 @@ class ConcordanceEngine:
             if risk_factors else ""
         )
 
-        # Tier-2 suppression — Tier 2 minimisation captures CCs like
-        # "high blood pressure" that under-triage in CVD cohorts. When the
-        # patient has *already* verbalised a high-acuity CC (chest pain,
-        # SOB, cardiac concern) and the safety-keyword auto-escalation
-        # has fired, that BP mention is comorbidity disclosure, not
-        # under-triage risk — the patient is presenting AS the high-acuity
-        # case. Firing Tier 2 here adds a misleading "Hypertension" flag
-        # on top of an already-escalated chart.
+        # Tier-2/3 suppression. Two suppression triggers:
+        #   1. Safety-keyword auto-escalation fired (chest pain / SOB /
+        #      cardiac concern) — patient is presenting AS the high-acuity
+        #      case; Tier 2/3 minimisation on top is noise.
+        #   2. A Tier-4 verbal minimisation phrase ALSO matches in the
+        #      same transcript — Tier-4 is the higher-confidence verbal
+        #      cue ('sorry to come in', 'probably nothing', 'I don't
+        #      want to bother'). Tier 2 (Hypertension) and Tier 3 (Weakness,
+        #      Epigastric, Headache, Leg pain) are regex-shaped to catch
+        #      patient-stated CCs but trigger false positives whenever
+        #      those terms appear as comorbidity disclosure ('I have
+        #      diabetes and high blood pressure'). When the patient is
+        #      ALREADY verbally minimising, the Tier-4 flag carries the
+        #      clinical signal — extra Tier-2/3 firings just clutter the
+        #      dashboard with the wrong trigger phrase (observed scenario
+        #      4 2026-05-08: M.E.R.C.E.D. surfaced 'high blood pressure'
+        #      as the gap when the actual minimisation was 'sorry to
+        #      come in for nothing').
         safety = detect_safety_escalation(transcript)
-        suppress_tier_2 = safety is not None
-        if suppress_tier_2:
+        tier4_matches = self.find_tier4(transcript)
+        suppress_t2_t3 = safety is not None or bool(tier4_matches)
+        if suppress_t2_t3:
             log.info(
-                "concordance: suppressing tier-2 flags (safety keyword '%s' fired)",
-                safety.label,
+                "concordance: suppressing tier-2/3 flags (safety=%s, tier4_matches=%d)",
+                safety.label if safety else None, len(tier4_matches),
             )
 
         for entry, matches in self.find_minimisation(transcript):
-            if suppress_tier_2 and entry.tier == 2:
+            if suppress_t2_t3 and entry.tier in (2, 3):
                 continue
             seed = (
                 f"Patient presents with {entry.triage_label.lower()} "

@@ -192,6 +192,13 @@ ELEMENTS: dict[str, list[str]] = {
         r"a\s+few|a\s+couple\s+(?:of\s+)?|several)\s+"
         r"(min|minute|hour|hr|day|week|month|year)s?\s+ago\b",
         r"\b(yesterday|today|tonight|this\s+morning|last\s+night|last\s+week|last\s+month)\b",
+        # "last day", "the last day or so", "for the last day", "the
+        # past few days" — fuzzy duration the patient often uses for
+        # subacute complaints (fatigue, malaise). Without this JACKIE
+        # re-asks "how long has this been going on" after the patient
+        # said it (observed scenario 4 2026-05-08).
+        r"\b(?:for\s+)?(?:the\s+)?(?:last|past)\s+(?:day|days|week|weeks|"
+        r"few\s+(?:days|weeks|hours|months)|couple\s+(?:of\s+)?(?:days|weeks|hours))(?:\s+or\s+so)?\b",
         r"\b(since|started|began|onset|came\s+on)\b",
         r"\b(suddenly|gradually|all\s+of\s+a\s+sudden)\b",
         # Spanish onset markers (US-clinical neutral / "usted" register)
