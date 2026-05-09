@@ -6,6 +6,25 @@ Built by [Janelle Tamayo](https://huggingface.co/jantam13), RN — for the AMD D
 
 ---
 
+## Contents
+
+- [Live demo](#live-demo) — URLs + the calibrated demo line
+- [Live AMD MI300X verification](#live-amd-mi300x-verification) — proof the inference is real
+- [Architecture](#architecture) — signals, agents, data flow
+- [Repo layout](#repo-layout)
+- [Local dev](#local-dev)
+- [Data compliance](#data-compliance) — what we use, what we don't, what's gitignored
+- [Literature anchoring](#literature-anchoring) — published evidence base
+- [Clinical safety architecture](#clinical-safety-architecture) — guardrails + fallback paths
+- [Voice isolation in real ED conditions](#voice-isolation-in-real-ed-conditions)
+- [Concordance engine — eval & false-positive rate](#concordance-engine--eval--false-positive-rate)
+- [Production Roadmap (V2)](#production-roadmap-v2)
+- [Clinical advisory — open call](#clinical-advisory--open-call)
+- [License](#license) — MIT + clinical-safety disclaimer
+- [Live demo + model](#live-demo--model) — one-stop links
+
+---
+
 ## Live demo
 
 Deployed on Railway. **HTTPS required** — browsers refuse microphone access on non-TLS pages, which would silently break the patient kiosk.
