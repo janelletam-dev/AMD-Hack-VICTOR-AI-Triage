@@ -703,4 +703,17 @@ or the AMD Developer Hackathon channel.
 
 ## License
 
-MIT.
+[MIT](LICENSE) — code is open for review, study, and adaptation.
+
+A clinical-safety disclaimer is appended to the [LICENSE](LICENSE) file
+clarifying that this is a hackathon-stage research prototype, NOT a
+regulated medical device, and must not drive real triage decisions
+without prospective validation, clinician oversight, IRB review, and a
+HIPAA/GDPR-compliant deployment with executed BAAs covering all
+third-party processors.
+
+## Live demo + model
+
+- **Demo (Railway, HTTPS required for kiosk mic)**: https://amd-hack-victor-ai-triage-production.up.railway.app
+- **Fine-tuned LoRA on Hugging Face**: [jantam13/victor-triage-lora-llama3.1-8b](https://huggingface.co/jantam13/victor-triage-lora-llama3.1-8b)
+- **Founder**: [Janelle Tamayo, RN](https://huggingface.co/jantam13)

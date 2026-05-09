@@ -1,0 +1,52 @@
+MIT License
+
+Copyright (c) 2026 Janelle Tamayo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTE — Clinical safety disclaimer (separate from the MIT license terms above):
+
+This software is a hackathon-stage prototype of a clinical-decision-support
+research tool. It is NOT a regulated medical device. It has not been
+evaluated by the FDA, MHRA, EMA, or any other regulatory body. It must not
+be used to make real triage, diagnostic, or treatment decisions for real
+patients without (1) clinician retention of independent review of the basis
+for each output, (2) a completed prospective validation study at the
+deploying institution, and (3) HIPAA/GDPR-compliant deployment with executed
+Business Associate Agreements covering all third-party model and inference
+processors.
+
+Voice biomarker outputs (Helios, Apollo, Psyche profiles) are wellness-scope
+signals, not regulated diagnostic outputs. Concordance flags are decision-
+support hints, not diagnoses. ESI scoring is computed deterministically from
+chief-complaint label and concordance flags; the LLM prose only narrates the
+decision and is subject to known LLM failure modes (hallucination, drift,
+prompt sensitivity).
+
+The clinical evidence base (MIMIC-IV-ED CVD bias dictionary, peer-reviewed
+voice-biomarker citations) is referenced for transparency. Clinical
+deployment requires cross-institutional retrospective validation, prospective
+study at the deploying ED, IRB approval, and FDA Clinical Decision Support
+Software guidance review per the responsibilities of the deploying
+institution.
+
+Patients seeking medical care should not rely on this software for any
+medical advice or care decision.
