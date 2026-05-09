@@ -362,118 +362,28 @@ triage notes with confirmed clinical outcomes is V2.
 > clinician review. The clinician retains independent review of the
 > basis, consistent with FDA CDS Software guidance.*
 
-### V2 fine-tuning path — Bridge2AI-Voice
+### V2 validation roadmap
+
+Validation extends V1 in three directions, each closing a different
+gap in the current evidence base:
+
+| Direction | Question it answers |
+|---|---|
+| Cross-institutional reasoning validation | "MIMIC is one hospital — does this generalize?" |
+| Outcome-grounded specificity | "What if a flag fires but the patient is fine?" |
+| Acoustic-affect direct fine-tuning | "Are voice biomarkers measuring what you say?" |
+
+The plan is to use credentialed public-research datasets for the
+retrospective phases ahead of a prospective study at a partner ED.
+Specific dataset selection, methodology, and use-case design are
+held in the V2 implementation plan and shared on request.
 
 The current LoRA at
 [`jantam13/victor-triage-lora-llama3.1-8b`](https://huggingface.co/jantam13/victor-triage-lora-llama3.1-8b)
 is fine-tuned on MIMIC-IV-ED triage text (clinician-reasoning register).
-The voice-acoustic side is currently sourced from thymia's Helios API.
-For V2, the affect-acoustic model could be fine-tuned directly on:
-
-- **[Bridge2AI-Voice on PhysioNet](https://physionet.org/content/b2ai-voice/3.1.0/)** —
-  833 participants, 29,278 recordings across five North American sites.
-  Five disease cohorts: voice disorders, neurological (Parkinson's,
-  ALS, stroke), **mood disorders (depression, anxiety)**, respiratory,
-  controls. The mood + control cohorts are the relevant slice for
-  V.I.C.T.O.R.'s lowSelfEsteem / suppressed-distress axis.
-- Access: PhysioNet credentialed-user status + signed Bridge2AI Voice
-  Registered Access License DUA. v3.1.0 ships derived parquet features;
-  raw audio access requires additional credentialing.
-- Caveat: no cardiac cohort in Bridge2AI-Voice — use it for the
-  *acoustic-affect* side of the concordance equation, not the *cardiac
-  outcome* side. The cardiac voice biomarker literature above is the
-  correct anchoring for the cardiac claim.
-
-See [Bridge2AI feasibility study, Frontiers 2025](https://pmc.ncbi.nlm.nih.gov/articles/PMC12037532/)
-for the broader vision V.I.C.T.O.R. positions as a downstream application of.
-
-### V2 prospective-validation path — ER-REASON (UCSF)
-
-The strongest pending validation move for V.I.C.T.O.R. is cross-institutional
-testing on
-[**ER-REASON**](https://physionet.org/content/er-reason/1.0.0/) — a 2024
-PhysioNet release of UCSF ED data: 3,437 patients, 3,984 encounters,
-25,174 clinical notes (March 2022 – March 2024) with ESI acuity at
-triage, 395 unique chief complaints, ED diagnoses, disposition
-decisions, and **72 expert-authored physician rationales** documenting
-step-by-step reasoning (rule-out logic, decision factors, treatment
-plans). Demographics include preferred language — a dimension MIMIC
-under-captures.
-
-ER-REASON closes the single-institution-bias caveat that the
-MIMIC-IV-ED-only validation currently carries. Concrete V2 work it
-unlocks:
-
-| Use case | Method | Question answered |
-|---|---|---|
-| Cross-institution bias dictionary | Re-run the chief-complaint-by-acuity analysis on ER-REASON; compare to MIMIC-IV-ED | Does abd-pain-F=2.80 vs CP-M=2.17 generalize past BIDMC? |
-| Concordance flag prospective validation | Run engine on ER-REASON triage notes; check fire rate against disposition outcomes | Does flag firing correlate with downstream under-triage signal? |
-| Reasoning-chain alignment | Fine-tune SCRIBE / MERCED on the 72 expert rationales | Do clinical-reasoning agents reason like attendings? |
-| JACKIE adversarial eval substrate | Construct adversarial test set from rationale corpus + edge-case prompts | Does JACKIE follow her safety rules in practice? |
-
-Access is gated: PhysioNet credentialed status + CITI training + signed
-DUA + author approval. License is "PhysioNet Contributor Review Health
-Data License 1.5.0." Realistic timeline ≈ 14 days for credentialing —
-which is exactly why this is named here as the V2 path, not promised
-as a hackathon deliverable.
-
-The methodology is accessible NOW, ahead of data approval. The
-[**AlaaLab/ER-Reason**](https://github.com/AlaaLab/ER-Reason/) GitHub
-repository is public and contains the benchmark's evaluation framework,
-prompt structures, and reasoning-task definitions. V2 work can adopt
-that scaffolding without waiting for the gated data — apply for data
-access in parallel.
-
-### V2 outcome-validation path — MIMIC-IV-Ext-MDS-ED
-
-ER-REASON validates V.I.C.T.O.R.'s reasoning fidelity cross-institution.
-The complementary V2 dataset is
-[**MIMIC-IV-Ext-MDS-ED**](https://physionet.org/content/multimodal-emergency-benchmark/1.0.0/) —
-"Multimodal Decision Support in the Emergency Department" (released
-Sept 2024) — which closes the *outcome* side of the under-triage
-claim:
-
-- 129,095 ECG records (waveforms resampled to 100 Hz)
-- Tabular clinical data: demographics, biometrics, **vital signs with
-  trends**, **laboratory values with trends**
-- 1,428 ICD-10 diagnostic codes
-- **15 deterioration labels** covering 6 clinical deterioration
-  conditions, ICU admission (2 time horizons), and **mortality at 7
-  time horizons** (24h / 48h / 72h / 7d / 14d / 30d / 90d)
-- Derived from the same MIMIC-IV cohort the bias dictionary is built
-  on — retrospective pairing of triage-characteristics with outcomes
-  is straightforward.
-
-The under-triage claim is operationally *"patients V.I.C.T.O.R. would
-have flagged at triage had outcomes worse than their assigned acuity
-predicted."* MIMIC-IV-Ext-MDS-ED has the outcome chain that
-proposition needs. Specifically:
-
-| V2 use case | Method | Question answered |
-|---|---|---|
-| Outcome-grounded specificity | Run concordance engine on MIMIC-IV triage data; check 24h/72h deterioration rate in flagged vs unflagged patients | "Does flagging correlate with actual deterioration, or just with stress?" |
-| HEART score validation | Pair triage-time HEART against subsequent ECG findings + 30d cardiac mortality | "Do V.I.C.T.O.R.'s clinical risk modules predict the right thing?" |
-| Demographic-stratified outcome bias | Repeat outcome analysis stratified by sex, age, ethnicity | "Does the bias gap show up in mortality, not just acuity?" |
-
-Access requirements: PhysioNet credentialed status + CITI training
-+ DUA. Same gating profile as ER-REASON, ~14-day timeline.
-
-### The complete V2 validation portfolio
-
-V.I.C.T.O.R.'s three named V2 validation datasets, each closing a
-different gap:
-
-| Dataset | Side validated | Gap closed |
-|---|---|---|
-| [MIMIC-IV-Ext-MDS-ED](https://physionet.org/content/multimodal-emergency-benchmark/1.0.0/) | Outcomes (deterioration / ICU / mortality) | "What if a flag fires but the patient is fine?" |
-| [ER-REASON (UCSF)](https://physionet.org/content/er-reason/1.0.0/) | Reasoning + cross-institutional generalization | "MIMIC is one hospital — does this generalize?" |
-| [Bridge2AI-Voice](https://physionet.org/content/b2ai-voice/3.1.0/) | Acoustic-affect side | "Are voice biomarkers measuring what you say?" |
-
-Together they cover text, outcomes, and audio — the three modalities
-V.I.C.T.O.R.'s conjunctive concordance signal depends on. A V2
-prospective study at a partner ED would replace each with that
-institution's own data; the three PhysioNet datasets are the bridge
-that gets the methodology right before the prospective phase.
+V2 retraining adds a held-out demographic test set, expanded corpus,
+and a model card with intended-use scope, known failure modes, and
+refresh cadence — see Production Roadmap.
 
 ---
 
@@ -596,11 +506,11 @@ speech is what reaches the swarm:
 
 ### V2 — what would close the gap further
 
-For a real ED pilot, three more layers would land:
+For a real ED pilot, three additional layers are planned:
 
-- **Hardware: directional mic + acoustic shroud / handset.** Cardioid pickup pattern narrows the acceptance angle to ~120°; shroud or phone-style handset adds 10-15 dB of physical isolation. The biggest single win.
-- **Speaker diarization** ([Deepgram natively supports this](https://developers.deepgram.com/docs/diarization)) so the swarm can distinguish patient from companion. Currently the chief-complaint phase captures whoever speaks; diarization would let SCRIBE attribute each utterance correctly and let JACKIE redirect family-answering-for-patient cases automatically.
-- **Real-time noise suppression SDK** ([Krisp](https://krisp.ai/sdk/), [MediaPipe Audio](https://ai.google.dev/edge/mediapipe), [Picovoice Eagle](https://picovoice.ai/platform/eagle/)) for post-WebRTC residual noise. Useful when ER ambient is sustained 80+ dB and WebRTC NS isn't enough.
+- Hardware acoustic isolation (directional mic + shroud / handset)
+- Speaker diarization for patient-vs-companion attribution
+- Post-WebRTC noise-suppression layer for sustained-loud ambient
 
 These are documented as V2 — see Production Roadmap. The current architecture already produces a usable transcript in moderate ER ambient (post-suppression RMS up to ~-30 dB) without modification.
 
@@ -668,7 +578,7 @@ they're auditable rather than hidden:
 | **Demo-mode safety** | `DEMO_MODE=true` env toggle | Startup assertion refuses to boot with `DEMO_MODE=true` and `NODE_ENV=production` together (shipped — see `main.py`) |
 | **Secrets management** | `.env` file, gitignored | Managed secrets vault with rotation policy |
 | **HIPAA BAA** | Out of scope for hackathon | BAAs with all third-party processors before any real PHI; encryption at rest + in transit |
-| **Clinical validation** | MIMIC-IV-derived rules + LoRA fine-tune | Cross-institutional retrospective on additional datasets, then prospective study at a partner ED; IRB; FDA CDS Software guidance review (clinician retains independent review of basis) |
+| **Clinical validation** | MIMIC-IV-derived rules + LoRA fine-tune | Cross-institutional retrospective + outcome-grounded analysis using credentialed public datasets; then prospective study at a partner ED; IRB; FDA CDS Software guidance review (clinician retains independent review of basis) |
 | **Clinical coding** | SCRIBE narrative only — explicit "Coding: pending clinician verification" placeholder; LLM never emits ICD-10/SNOMED codes inline | **Verifier pattern**, not direct LLM generation. Codes come from a verified table with clinician confirmation, not LLM hallucination — codes the chart will be billed against require deterministic provenance. |
 | **Observability** | Stdout logs + `/health/full` | Distributed tracing, metrics, error reporting, paged alerts on agent-fallback rate spikes |
 | **Disaster recovery** | None | Snapshots + cross-region replication; documented RTO/RPO |
