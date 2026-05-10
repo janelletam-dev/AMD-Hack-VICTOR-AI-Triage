@@ -37,6 +37,44 @@ function showDebug() {
   return new URLSearchParams(window.location.search).get("debug") === "1";
 }
 
+// Deepgram occasionally emits multiple is_final segments for one spoken
+// phrase, each with subtle wording differences ("maybe" → "may be",
+// dropped commas, slight verb changes). The old `prev.endsWith(trimmed)`
+// check only caught byte-identical duplicates, so the textarea would
+// concatenate three near-identical versions of the same complaint and
+// downstream the bloated text drove multiple jackie_turn events whose
+// audio overlapped on playback. Compare normalized word streams instead.
+function _normalizeForDedup(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function isNearDuplicateTail(prev, incoming) {
+  const np = _normalizeForDedup(prev);
+  const nc = _normalizeForDedup(incoming);
+  if (!nc) return true;          // empty/junk → drop
+  if (!np) return false;         // first segment → keep
+  if (np === nc) return true;
+  if (np.endsWith(nc)) return true;
+  const cWords = nc.split(" ").filter(Boolean);
+  const pWords = np.split(" ").filter(Boolean);
+  if (cWords.length < 2) return false;          // single-word dedup is risky
+  // Compare incoming against the trailing window of prev of the same
+  // word-count. ≥70% positional word match → treat as a re-emission.
+  const tail = pWords.slice(-cWords.length);
+  let matches = 0;
+  for (let i = 0; i < cWords.length; i++) if (tail[i] === cWords[i]) matches++;
+  return matches / cWords.length >= 0.7;
+}
+function appendDraft(prev, incoming) {
+  const trimmed = String(incoming || "").trim();
+  if (!trimmed) return prev;
+  if (!prev) return trimmed;
+  return `${prev} ${trimmed}`;
+}
+
 // Triage-nurse register: brisk, competent, warm but never therapeutic.
 // We convey calm with the voice + cadence, not by padding the prose with
 // "take your time" / "no rush" — that reads as mismatched in an ER.
@@ -785,26 +823,13 @@ export default function PatientView() {
     // Functional updater avoids stale-closure issues if multiple finals
     // arrive in quick succession.
     if (p === "complaint") {
-      setComplaintDraft((prev) => {
-        const trimmed = text.trim();
-        if (!trimmed) return prev;
-        if (!prev) return trimmed;
-        // Skip if Deepgram echoed exactly the same final twice
-        if (prev.endsWith(trimmed)) return prev;
-        return `${prev} ${trimmed}`;
-      });
+      setComplaintDraft((prev) => isNearDuplicateTail(prev, text) ? prev : appendDraft(prev, text));
     }
     // Same accumulation pattern for conversation-phase answers — the
     // patient can speak across multiple breaths and fix mistranscriptions
     // in the textarea before tapping Send.
     if (p === "conversation") {
-      setConversationDraft((prev) => {
-        const trimmed = text.trim();
-        if (!trimmed) return prev;
-        if (!prev) return trimmed;
-        if (prev.endsWith(trimmed)) return prev;
-        return `${prev} ${trimmed}`;
-      });
+      setConversationDraft((prev) => isNearDuplicateTail(prev, text) ? prev : appendDraft(prev, text));
     }
 
     // Conversation phase used to auto-stop the mic on every final and
