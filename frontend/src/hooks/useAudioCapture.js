@@ -96,7 +96,19 @@ export function useAudioCapture({ onFrame, onNoiseLevel } = {}) {
         if (fn) fn(e.data);
       };
       src.connect(node);
-      node.connect(ctx.destination);
+      // Muted-gain sink: the worklet only emits PCM frames via
+      // port.postMessage; its audio outputs are unused. Connecting the
+      // node directly to ctx.destination produced an audible mic→speaker
+      // passthrough on built-in-speakers + built-in-mic setups (the
+      // worklet's processing latency becomes a ~40ms echo of whatever
+      // the mic picks up, including the kiosk's own TTS audio).
+      // Routing through a gain=0 node keeps the audio graph "alive"
+      // so Chrome doesn't optimize the worklet away, while guaranteeing
+      // zero output reaches the speakers.
+      const silentSink = ctx.createGain();
+      silentSink.gain.value = 0;
+      node.connect(silentSink);
+      silentSink.connect(ctx.destination);
       nodeRef.current = node;
 
       // Real-time noise meter — runs in parallel with the worklet so the
