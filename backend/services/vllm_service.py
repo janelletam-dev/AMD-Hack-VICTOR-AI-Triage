@@ -72,7 +72,7 @@ class VLLMService:
             api_key=self.api_key,
             temperature=0.2,
             max_tokens=512,
-            timeout=30,
+            timeout=3,
         )
         log.info(
             "VLLMService configured: base_url=%s model=%s",
@@ -107,7 +107,7 @@ class VLLMService:
                 api_key=self.api_key,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                timeout=30,
+                timeout=3,
             )
         # Latency instrumentation — every chat call gets timed and the
         # elapsed milliseconds logged at INFO so production deploys can
