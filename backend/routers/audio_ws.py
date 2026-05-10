@@ -250,7 +250,7 @@ async def audio_ws(
                     },
                 })
                 return
-            if elapsed >= 60 and not state["silence_warned"]:
+            if elapsed >= 180 and not state["silence_warned"]:
                 state["silence_warned"] = True
                 silence_prompt = (
                     "It seems like you've stepped away. "

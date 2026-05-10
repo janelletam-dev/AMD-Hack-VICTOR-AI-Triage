@@ -20,14 +20,15 @@ const PHASES = ["first_name", "last_name", "dob", "gender", "complaint", "conver
 // Barge-in lets the patient interrupt TTS by speaking; we pause the audio.
 // Risk: on a laptop without headphones, the mic can pick up TTS from the
 // speakers, Deepgram transcribes it, and we false-trigger a barge-in (cuts
-// off the assistant mid-sentence). Set to false for demo day if testing
-// shows this happens. URL override: ?barge=0 disables, ?barge=1 forces on.
+// off the assistant mid-sentence). URL override: ?barge=0 disables, ?barge=1
+// forces on. Default flipped to OFF for demo day after live testing showed
+// the kiosk's own voice triggering self-interruption on built-in speakers.
 const BARGE_IN_ENABLED = (() => {
-  if (typeof window === "undefined") return true;
+  if (typeof window === "undefined") return false;
   const v = new URLSearchParams(window.location.search).get("barge");
   if (v === "0") return false;
   if (v === "1") return true;
-  return true;  // default on
+  return false;  // default off
 })();
 
 // Show the bottom dev strip only when ?debug=1 is on the URL — keeps the
