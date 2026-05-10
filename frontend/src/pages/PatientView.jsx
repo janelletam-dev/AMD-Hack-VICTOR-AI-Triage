@@ -658,6 +658,16 @@ export default function PatientView() {
   // hold the latest data and flush it after a quiet window.
   const pendingJackieTurnRef = useRef(null);
   const jackieTurnFlushTimerRef = useRef(null);
+  // True from the moment playTTS commits to playing audio until that
+  // audio finishes (or errors). Live testing on built-in-speakers +
+  // built-in-mic showed the browser's echoCancellation isn't strong
+  // enough to fully suppress the kiosk's own TTS from being captured
+  // by the mic — Deepgram then transcribes it back, the textarea fills
+  // with the assistant's own prompt as if the patient said it, and
+  // each captured TTS triggers another jackie_turn cascade. Gating
+  // transcript processing on this flag means even when echoCancellation
+  // leaks, the frontend ignores the leaked transcripts.
+  const ttsPlayingRef = useRef(false);
   const ttsStateRef = useRef("idle");
 
   const onEvent = useCallback((evt) => {
@@ -775,6 +785,24 @@ export default function PatientView() {
     if (evt.type !== "transcript" || !evt.data?.text) return;
     const text = evt.data.text.trim();
     if (!text) return;
+
+    // Drop transcripts that arrive while the kiosk's own TTS is
+    // playing. Built-in-speakers + built-in-mic configurations (and
+    // especially Safari / iOS Safari where echoCancellation is much
+    // weaker than Chrome) capture the assistant's voice through the
+    // mic, Deepgram transcribes it, and without this guard the
+    // textarea fills with the prompt text as if the patient said it
+    // — observed in production on Safari + iPhone testing where the
+    // sex-at-birth prompt and complaint prompt both landed in the
+    // editable textarea verbatim.
+    if (ttsPlayingRef.current) {
+      // [TTS-DEBUG]
+      console.log("[TTS] transcript dropped (TTS playing)", {
+        textPreview: text.slice(0, 60),
+        is_final: !!evt.data.is_final,
+      });
+      return;
+    }
 
     // Barge-in: if the patient starts speaking while TTS is playing,
     // pause the audio so we don't talk over them. Threshold of 2 chars
@@ -1040,6 +1068,7 @@ export default function PatientView() {
       }
       audioRef.current = audio;
       activeAudiosRef.current.add(audio);
+      ttsPlayingRef.current = true;
       setTtsState("speaking");
       // [TTS-DEBUG]
       console.log("[TTS] audio.play() starting", {
@@ -1056,6 +1085,9 @@ export default function PatientView() {
         setTtsState(status);
         URL.revokeObjectURL(blobUrl);
         activeAudiosRef.current.delete(audio);
+        if (activeAudiosRef.current.size === 0) {
+          ttsPlayingRef.current = false;
+        }
         // [TTS-DEBUG]
         console.log("[TTS] audio finished", { token: myToken, status, remainingActive: activeAudiosRef.current.size });
         if (typeof onEnded === "function") onEnded();
