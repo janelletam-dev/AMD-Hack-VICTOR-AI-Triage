@@ -604,6 +604,14 @@ export default function PatientView() {
   // break the ended-event chain that drives mic auto-start (the smoking
   // gun for the gender → complaint stall reported during testing).
   const ttsAbortRef = useRef(null);
+  // Every Audio instance we've ever created is tracked here so a new
+  // playTTS can pause + tear down ALL of them, not just audioRef.current.
+  // Chrome can keep emitting decoded audio for a moment after pause() if
+  // the audio's play() promise was still pending — a previous Audio
+  // whose finish() never fired (paused before "ended") leaks its tail
+  // into the next utterance and produces an audible echo on follow-ups.
+  // The Set is the belt to audioRef's suspenders.
+  const activeAudiosRef = useRef(new Set());
   const ttsStateRef = useRef("idle");
 
   const onEvent = useCallback((evt) => {
@@ -909,12 +917,19 @@ export default function PatientView() {
     });
 
     // Hard-cancel anything already playing AND any fetch still in
-    // flight from a previous playTTS call.
-    if (audioRef.current) {
-      try { audioRef.current.pause(); } catch {}
-      try { audioRef.current.src = ""; } catch {}
-      audioRef.current = null;
+    // flight from a previous playTTS call. Iterate the active-audios
+    // set rather than relying on audioRef alone: an Audio whose
+    // finish() never fired (because it was paused before "ended") is
+    // still decoding into the audio output device and bleeds into the
+    // next utterance as an echo. pause + clear src + load() resets the
+    // element's internal media-engine state so the buffer drains.
+    for (const a of activeAudiosRef.current) {
+      try { a.pause(); } catch {}
+      try { a.removeAttribute("src"); } catch {}
+      try { a.load(); } catch {}
     }
+    activeAudiosRef.current.clear();
+    audioRef.current = null;
     if (ttsAbortRef.current) {
       try { ttsAbortRef.current.abort(); } catch { /* noop */ }
     }
@@ -972,12 +987,14 @@ export default function PatientView() {
         return;
       }
       audioRef.current = audio;
+      activeAudiosRef.current.add(audio);
       setTtsState("speaking");
       // [TTS-DEBUG]
       console.log("[TTS] audio.play() starting", {
         token: myToken,
         voice,
         textPreview: String(text).slice(0, 60),
+        activeAudioCount: activeAudiosRef.current.size,
         otherAudioElsInDom: typeof document !== "undefined" ? document.querySelectorAll("audio").length : -1,
       });
       let settled = false;
@@ -986,8 +1003,9 @@ export default function PatientView() {
         settled = true;
         setTtsState(status);
         URL.revokeObjectURL(blobUrl);
+        activeAudiosRef.current.delete(audio);
         // [TTS-DEBUG]
-        console.log("[TTS] audio finished", { token: myToken, status });
+        console.log("[TTS] audio finished", { token: myToken, status, remainingActive: activeAudiosRef.current.size });
         if (typeof onEnded === "function") onEnded();
       };
       audio.addEventListener("ended", () => finish("done"));
