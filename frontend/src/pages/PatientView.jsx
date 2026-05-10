@@ -650,6 +650,13 @@ export default function PatientView() {
   // into the next utterance and produces an audible echo on follow-ups.
   // The Set is the belt to audioRef's suspenders.
   const activeAudiosRef = useRef(new Set());
+  // Debounce slot for rapid-fire jackie_turn events. Production logs
+  // showed turn N, N+1, and N+2 (closing) all arriving within a few
+  // hundred ms after one user answer; each was triggering playTTS
+  // and cancelling the previous mid-audio — perceived as echo. We
+  // hold the latest data and flush it after a quiet window.
+  const pendingJackieTurnRef = useRef(null);
+  const jackieTurnFlushTimerRef = useRef(null);
   const ttsStateRef = useRef("idle");
 
   const onEvent = useCallback((evt) => {
@@ -678,6 +685,16 @@ export default function PatientView() {
     }
 
     // ───────────── J.A.C.K.I.E. follow-up turn → play TTS ─────────────
+    // Coalesce rapid-fire jackie_turn events. Symptom: in production the
+    // backend was occasionally publishing turn N, N+1, and N+2 (closing)
+    // within a few hundred ms after one user answer. Each new turn
+    // triggered playTTS, which cancelled the previous mid-audio — the
+    // patient heard the tail of one + start of the next + start of the
+    // next, perceived as an echo with shifting words. Until that
+    // backend cascade is root-caused, hold each incoming turn in a
+    // pending slot and flush the LATEST one after a short quiet
+    // window. Conversation log still records each turn for visibility;
+    // only the audio is debounced.
     if (evt.type === "jackie_turn" && evt.data?.text) {
       const data = evt.data;
       // [TTS-DEBUG] instrumentation — temporary, remove after voice-overlap diagnosis
@@ -691,40 +708,49 @@ export default function PatientView() {
         unsupported_language: !!data.unsupported_language,
         emergency: !!data.emergency,
       });
-      setJackieTurn({
-        text: data.text,
-        turn: data.turn,
-        max_turns: data.max_turns,
-        closing: !!data.closing,
-      });
-      // Append the just-arrived JACKIE question to the on-screen
-      // conversation log so the patient (and an observing clinician)
-      // can scroll back through the dialogue. Clip to last 20 entries
-      // to keep DOM size bounded — full history lives backend-side.
+      // Always append to conversation log immediately so the patient
+      // sees the dialogue progressing even when audio is debounced.
       setConversationLog((prev) => {
         const next = [...prev, { role: "jackie", text: data.text, turn: data.turn }];
         return next.length > 20 ? next.slice(-20) : next;
       });
-      // TTS is starting — clear "thinking" state.
       setProcessingState("speaking");
-      // Reset the running transcript so the patient's reply starts fresh.
-      phaseTextRef.current = "";
-      lastFinalRef.current = "";
-      setInterimText("");
-      // New JACKIE question → clear the conversation textarea so the
-      // patient sees a fresh empty box for their answer (same UX
-      // pattern as the complaint phase). Without this the prior
-      // answer would still be displayed and confuse the next turn.
-      setConversationDraft("");
-      const fn = playTTSRef.current;
-      if (fn) fn(data.text, () => {
-        setProcessingState(null);
-        if (data.closing) return; // triage_complete will move us to done
-        // 150ms handoff beat before flipping to "Listening" — avoids
-        // jarring instant cutover from speaking → listening.
-        const startFn = micStartRef.current;
-        if (startFn) setTimeout(() => startFn(), 250);
-      });
+      // Stash the latest turn data; a debounced timer below flushes it.
+      pendingJackieTurnRef.current = data;
+      if (jackieTurnFlushTimerRef.current) {
+        clearTimeout(jackieTurnFlushTimerRef.current);
+      }
+      jackieTurnFlushTimerRef.current = setTimeout(() => {
+        const flush = pendingJackieTurnRef.current;
+        pendingJackieTurnRef.current = null;
+        jackieTurnFlushTimerRef.current = null;
+        if (!flush) return;
+        // [TTS-DEBUG]
+        console.log("[TTS] jackie_turn flushed", {
+          turn: flush.turn,
+          closing: !!flush.closing,
+          textPreview: String(flush.text).slice(0, 60),
+        });
+        setJackieTurn({
+          text: flush.text,
+          turn: flush.turn,
+          max_turns: flush.max_turns,
+          closing: !!flush.closing,
+        });
+        phaseTextRef.current = "";
+        lastFinalRef.current = "";
+        setInterimText("");
+        setConversationDraft("");
+        const fn = playTTSRef.current;
+        if (fn) fn(flush.text, () => {
+          setProcessingState(null);
+          if (flush.closing) return; // triage_complete will move us to done
+          // 150ms handoff beat before flipping to "Listening" — avoids
+          // jarring instant cutover from speaking → listening.
+          const startFn = micStartRef.current;
+          if (startFn) setTimeout(() => startFn(), 250);
+        });
+      }, 350);
       return;
     }
 
