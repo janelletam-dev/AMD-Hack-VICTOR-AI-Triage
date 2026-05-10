@@ -634,6 +634,17 @@ export default function PatientView() {
     // ───────────── J.A.C.K.I.E. follow-up turn → play TTS ─────────────
     if (evt.type === "jackie_turn" && evt.data?.text) {
       const data = evt.data;
+      // [TTS-DEBUG] instrumentation — temporary, remove after voice-overlap diagnosis
+      console.log("[TTS] jackie_turn received", {
+        textPreview: String(data.text).slice(0, 60),
+        textLen: String(data.text).length,
+        turn: data.turn,
+        closing: !!data.closing,
+        low_confidence: !!data.low_confidence,
+        silence_prompt: !!data.silence_prompt,
+        unsupported_language: !!data.unsupported_language,
+        emergency: !!data.emergency,
+      });
       setJackieTurn({
         text: data.text,
         turn: data.turn,
@@ -873,6 +884,8 @@ export default function PatientView() {
 
   const playTTS = useCallback((text, onEnded) => {
     if (!text || !voice) {
+      // [TTS-DEBUG]
+      console.log("[TTS] playTTS skipped (no text or no voice)", { hasText: !!text, voice });
       if (typeof onEnded === "function") setTimeout(onEnded, 100);
       return;
     }
@@ -884,6 +897,16 @@ export default function PatientView() {
     // same time" bug observed when persona switches mid-flight or
     // when two jackie_turn events arrive faster than fetch resolution.
     const myToken = ++ttsTokenRef.current;
+    // [TTS-DEBUG] instrumentation — temporary, remove after voice-overlap diagnosis
+    console.log("[TTS] playTTS entry", {
+      voice,
+      token: myToken,
+      textPreview: String(text).slice(0, 60),
+      textLen: String(text).length,
+      audioRefActive: !!audioRef.current,
+      abortRefActive: !!ttsAbortRef.current,
+      activeAudioElsInDom: typeof document !== "undefined" ? document.querySelectorAll("audio").length : -1,
+    });
 
     // Hard-cancel anything already playing AND any fetch still in
     // flight from a previous playTTS call.
@@ -914,7 +937,18 @@ export default function PatientView() {
 
     const isStale = () => myToken !== ttsTokenRef.current || ac.signal.aborted;
 
+    // [TTS-DEBUG]
+    console.log("[TTS] fetch starting", { token: myToken, url });
     fetch(url, { signal: ac.signal }).then(async (res) => {
+      // [TTS-DEBUG]
+      console.log("[TTS] fetch resolved", {
+        token: myToken,
+        currentToken: ttsTokenRef.current,
+        stale: isStale(),
+        status: res.status,
+        contentType: res.headers.get("content-type"),
+        fallbackHeader: res.headers.get("X-TTS-Fallback"),
+      });
       if (isStale()) return;
       const contentType = res.headers.get("content-type") || "";
       if (contentType.includes("application/json") || res.headers.get("X-TTS-Fallback")) {
@@ -925,6 +959,8 @@ export default function PatientView() {
       const blob = await res.blob();
       if (isStale()) {
         // Drop the audio — a newer playTTS has already started.
+        // [TTS-DEBUG]
+        console.log("[TTS] dropped after blob() (stale)", { token: myToken, currentToken: ttsTokenRef.current });
         return;
       }
       const blobUrl = URL.createObjectURL(blob);
@@ -937,12 +973,21 @@ export default function PatientView() {
       }
       audioRef.current = audio;
       setTtsState("speaking");
+      // [TTS-DEBUG]
+      console.log("[TTS] audio.play() starting", {
+        token: myToken,
+        voice,
+        textPreview: String(text).slice(0, 60),
+        otherAudioElsInDom: typeof document !== "undefined" ? document.querySelectorAll("audio").length : -1,
+      });
       let settled = false;
       const finish = (status) => {
         if (settled) return;
         settled = true;
         setTtsState(status);
         URL.revokeObjectURL(blobUrl);
+        // [TTS-DEBUG]
+        console.log("[TTS] audio finished", { token: myToken, status });
         if (typeof onEnded === "function") onEnded();
       };
       audio.addEventListener("ended", () => finish("done"));
@@ -963,6 +1008,12 @@ export default function PatientView() {
     // newer playTTS already started ElevenLabs — the user hears
     // both (browser robotic voice + real persona).
     const myToken = ttsTokenRef.current;
+    // [TTS-DEBUG] instrumentation — temporary, remove after voice-overlap diagnosis
+    console.log("[TTS] speakWithWebSpeechAPI entry", {
+      token: myToken,
+      hasSynth: typeof window !== "undefined" && !!window.speechSynthesis,
+      textPreview: String(text).slice(0, 60),
+    });
     setTtsState("speaking");
     if (!window.speechSynthesis) {
       setTimeout(() => {
