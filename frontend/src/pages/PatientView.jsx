@@ -895,7 +895,17 @@ export default function PatientView() {
     if (ttsAbortRef.current) {
       try { ttsAbortRef.current.abort(); } catch { /* noop */ }
     }
+    // Chrome's speechSynthesis.cancel() is famously unreliable — a
+    // single cancel() often fails to stop the currently-speaking
+    // utterance and the buffered audio "ghosts" for 5-15 s, audible
+    // alongside any subsequent ElevenLabs HTML audio. Workaround
+    // sequence (well-known Chromium bug remediation): cancel, pause,
+    // resume, cancel — the pause+resume "wakes" the queue so the
+    // second cancel actually clears it.
     if (typeof window !== "undefined" && window.speechSynthesis) {
+      try { window.speechSynthesis.cancel(); } catch { /* noop */ }
+      try { window.speechSynthesis.pause(); } catch { /* noop */ }
+      try { window.speechSynthesis.resume(); } catch { /* noop */ }
       try { window.speechSynthesis.cancel(); } catch { /* noop */ }
     }
     const ac = new AbortController();
@@ -946,20 +956,34 @@ export default function PatientView() {
   }, [voice]);
 
   const speakWithWebSpeechAPI = useCallback((text, onEnded) => {
+    // Token check — if a newer playTTS bumped the token between the
+    // fetch starting and the fallback being chosen, drop this Web
+    // Speech utterance entirely. Without this guard, a slow JSON
+    // fallback response could fire speakWithWebSpeechAPI AFTER a
+    // newer playTTS already started ElevenLabs — the user hears
+    // both (browser robotic voice + real persona).
+    const myToken = ttsTokenRef.current;
     setTtsState("speaking");
     if (!window.speechSynthesis) {
-      // No Web Speech API either — just show text, advance after delay.
       setTimeout(() => {
+        if (myToken !== ttsTokenRef.current) return;
         setTtsState("done");
         if (typeof onEnded === "function") onEnded();
       }, Math.min(text.length * 50, 3000));
       return;
     }
-    // Defense-in-depth against the voice double-play bug: cancel ANY
-    // queued or in-progress Web Speech utterance before queuing the new
-    // one. Without this, two consecutive fallbacks (ElevenLabs flaky →
-    // both fall back) result in both utterances playing concurrently.
+    // Same Chrome cancel-sequence as playTTS — a lone cancel() often
+    // doesn't stop the currently-speaking utterance.
     try { window.speechSynthesis.cancel(); } catch { /* noop */ }
+    try { window.speechSynthesis.pause(); } catch { /* noop */ }
+    try { window.speechSynthesis.resume(); } catch { /* noop */ }
+    try { window.speechSynthesis.cancel(); } catch { /* noop */ }
+    // Re-check token AFTER the cancel sequence; if a newer playTTS
+    // landed in that window, don't speak this utterance.
+    if (myToken !== ttsTokenRef.current) {
+      if (typeof onEnded === "function") onEnded();
+      return;
+    }
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.95;
     utterance.pitch = 1.0;
@@ -971,6 +995,12 @@ export default function PatientView() {
       setTtsState("error");
       if (typeof onEnded === "function") onEnded();
     };
+    // Final stale-check the moment before .speak() — Chrome's queue
+    // window for cancel propagation closes here.
+    if (myToken !== ttsTokenRef.current) {
+      if (typeof onEnded === "function") onEnded();
+      return;
+    }
     window.speechSynthesis.speak(utterance);
   }, []);
 
