@@ -11,6 +11,17 @@ export function useWebSocket(url, { onEvent } = {}) {
   const wsRef = useRef(null);
   const retryRef = useRef(0);
   const stoppedRef = useRef(false);
+  // Stash onEvent in a ref so the WebSocket doesn't tear down + reconnect on
+  // every parent re-render where onEvent is a fresh closure. Without this,
+  // `connect` is rebuilt every render → useEffect cleanup runs → ws_v1.close()
+  // is queued (async) while a new ws_v2 is opened immediately. When ws_v1's
+  // delayed onclose finally fires it observes stoppedRef=false (the new
+  // effect already reset it) and schedules a phantom reconnect, spawning a
+  // ws_v3 that co-subscribes to the same room. The backend's bus.publish
+  // then delivers each event to multiple sockets → onEvent runs N times →
+  // playTTS fires N times with the same text → audio echo on follow-ups.
+  const onEventRef = useRef(onEvent);
+  onEventRef.current = onEvent;
 
   const connect = useCallback(() => {
     if (!url) return;
@@ -34,20 +45,25 @@ export function useWebSocket(url, { onEvent } = {}) {
       try {
         const evt = JSON.parse(ev.data);
         setLastEvent(evt);
-        onEvent && onEvent(evt);
+        const handler = onEventRef.current;
+        handler && handler(evt);
       } catch {
         /* ignore */
       }
     };
     ws.onerror = () => setStatus("error");
     ws.onclose = () => {
+      // If a newer ws has already taken over (wsRef updated to a different
+      // socket), this is a stale close from a torn-down connection — don't
+      // drive reconnect logic from here, the active socket owns it.
+      if (wsRef.current !== ws) return;
       setStatus("closed");
       if (stoppedRef.current) return;
       const delay = Math.min(1000 * 2 ** retryRef.current, 10_000);
       retryRef.current += 1;
       setTimeout(connect, delay);
     };
-  }, [url, onEvent]);
+  }, [url]);
 
   useEffect(() => {
     stoppedRef.current = false;
